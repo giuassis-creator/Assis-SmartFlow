@@ -135,6 +135,10 @@ services:
     build:
       context: ./qa
     profiles: ["tools"]
+    environment:
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:4b-instruct}
+      TTS_VOICE: ${TTS_VOICE:-pf_dora}
     volumes:
       - ..:/workspace:ro
     working_dir: /workspace
