@@ -20,12 +20,12 @@ services:
   redis:
     image: redis:${REDIS_VERSION:-7.4-alpine}
     restart: unless-stopped
-    command: ["sh","-c","exec redis-server --appendonly yes --requirepass '$$REDIS_PASSWORD'"]
+    command: ["sh","-c","exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes: ["redis_data:/data"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -81,7 +81,6 @@ services:
       - ../enterprise:/opt/assis/enterprise:ro
       - ../mcp:/opt/assis/mcp:ro
     networks: [frontend, backend]
-
 
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-0.33.3}
