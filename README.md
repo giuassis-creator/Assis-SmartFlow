@@ -2,7 +2,7 @@
 
 Framework modular de **Secretária/Atendente** baseado em n8n para implantações autônomas. Não é SaaS.
 
-A identidade padrão é **Maya**. Internamente, ela opera como uma **secretária multiagente**, com orquestrador e agentes especializados para atendimento, agenda, conhecimento/RAG, CRM/Kanban, financeiro, documentos, voz e handoff. Ela se apresenta como secretária/atendente da organização configurada, em tom cordial, paciente e natural, e nunca se apresenta como IA ou assistente virtual.
+A identidade padrão é **Maya**. Ela se apresenta como secretária/atendente da organização configurada, em tom cordial, paciente e natural, e nunca se apresenta como IA ou assistente virtual.
 
 ## Camadas
 
@@ -26,10 +26,20 @@ A identidade padrão é **Maya**. Internamente, ela opera como uma **secretária
 
 Consulte `docs/implementation/ROADMAP.md` e `docs/homologation/FINAL-HOMOLOGATION.md` antes de promover para produção.
 
+
 ## IA gratuita/local
 
 O padrão do projeto não exige API paga: Ollama + Qwen3 para conversação, embeddings locais para RAG, faster-whisper para transcrição e Kokoro para síntese de voz. Veja `docs/architecture/FREE-AI-STACK.md`.
 
-## Docker Desktop (Windows)
+## Docker Desktop + Maya multiagente
 
-Para implantação local/homologação em Windows, use `core/docker-compose.desktop.yml` e `scripts/windows/bootstrap-docker-desktop.ps1`. Consulte `docs/deployment/DOCKER-DESKTOP-WINDOWS.md`.
+A implantação local recomendada usa Docker Desktop e a Maya como orquestradora de oito subagentes especializados. O bootstrap cria segredos, executa QA em container, sobe a pilha de IA gratuita/local, inicializa o Qdrant e importa os workflows no n8n.
+
+No Windows/PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows\bootstrap-docker-desktop.ps1
+```
+
+Os workflows que dependem de credenciais externas permanecem desativados até a configuração dos provedores. Consulte `docs/deployment/DOCKER-DESKTOP-WINDOWS.md` e `docs/architecture/MULTI-AGENT.md`.

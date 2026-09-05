@@ -3,22 +3,205 @@
   "orchestrator": "maya.orchestrator",
   "default_agent": "reception.agent",
   "agents": [
-    {"id":"reception.agent","name":"Maya Atendimento","purpose":"Triagem, acolhimento, dúvidas gerais e roteamento.","tools":["knowledge.search","handoff.create"],"memory":["short","long-read"],"can_write":["conversation","kanban"]},
-    {"id":"calendar.agent","name":"Maya Agenda","purpose":"Consultar disponibilidade, agendar, reagendar e cancelar compromissos.","tools":["calendar.availability","calendar.book","calendar.reschedule","calendar.cancel"],"memory":["short","long-read"],"can_write":["calendar","conversation"]},
-    {"id":"knowledge.agent","name":"Maya Conhecimento","purpose":"Responder com base no RAG da organização, sem inventar fatos.","tools":["knowledge.search"],"memory":["short","long-read"],"can_write":["conversation"]},
-    {"id":"crm.agent","name":"Maya Relacionamento","purpose":"Atualizar contato, estágio e Kanban de atendimento/leads.","tools":["crm.upsert_contact","crm.update_stage","kanban.upsert_card"],"memory":["short","long-read-write"],"can_write":["crm","kanban","memory"]},
-    {"id":"finance.agent","name":"Maya Financeiro","purpose":"Cobranças e consultas financeiras dentro de políticas de confirmação.","tools":["payments.create_charge"],"memory":["short"],"can_write":["payments","conversation"],"requires_confirmation":true},
-    {"id":"document.agent","name":"Maya Documentos","purpose":"Triar, classificar e encaminhar documentos; conteúdo factual via RAG.","tools":["knowledge.search","kanban.upsert_card"],"memory":["short"],"can_write":["documents","kanban"]},
-    {"id":"voice.agent","name":"Maya Voz","purpose":"Transcrever, sintetizar voz e encaminhar o turno ao orquestrador.","tools":["voice.transcribe.local","voice.synthesize.local","voice.callback"],"memory":["short"],"can_write":["conversation"]},
-    {"id":"handoff.agent","name":"Maya Handoff","purpose":"Preparar transferência para humano com resumo e histórico recente.","tools":["handoff.create","kanban.upsert_card"],"memory":["short","long-read"],"can_write":["handoff","kanban","conversation"]}
+    {
+      "id": "reception.agent",
+      "name": "Maya Atendimento",
+      "purpose": "Triagem, acolhimento, dúvidas gerais e roteamento.",
+      "tools": [
+        "knowledge.search",
+        "handoff.create"
+      ],
+      "memory": [
+        "short",
+        "long-read"
+      ],
+      "can_write": [
+        "conversation",
+        "kanban"
+      ]
+    },
+    {
+      "id": "calendar.agent",
+      "name": "Maya Agenda",
+      "purpose": "Consultar disponibilidade, agendar, reagendar e cancelar compromissos.",
+      "tools": [
+        "calendar.availability",
+        "calendar.book",
+        "calendar.reschedule",
+        "calendar.cancel"
+      ],
+      "memory": [
+        "short",
+        "long-read"
+      ],
+      "can_write": [
+        "calendar",
+        "conversation"
+      ]
+    },
+    {
+      "id": "knowledge.agent",
+      "name": "Maya Conhecimento",
+      "purpose": "Responder com base no RAG da organização, sem inventar fatos.",
+      "tools": [
+        "knowledge.search"
+      ],
+      "memory": [
+        "short",
+        "long-read"
+      ],
+      "can_write": [
+        "conversation"
+      ]
+    },
+    {
+      "id": "crm.agent",
+      "name": "Maya Relacionamento",
+      "purpose": "Atualizar contato, estágio e Kanban de atendimento/leads.",
+      "tools": [
+        "crm.upsert_contact",
+        "crm.update_stage",
+        "kanban.upsert_card"
+      ],
+      "memory": [
+        "short",
+        "long-read-write"
+      ],
+      "can_write": [
+        "crm",
+        "kanban",
+        "memory"
+      ]
+    },
+    {
+      "id": "finance.agent",
+      "name": "Maya Financeiro",
+      "purpose": "Cobranças e consultas financeiras dentro de políticas de confirmação.",
+      "tools": [
+        "payments.create_charge"
+      ],
+      "memory": [
+        "short"
+      ],
+      "can_write": [
+        "payments",
+        "conversation"
+      ],
+      "requires_confirmation": true
+    },
+    {
+      "id": "document.agent",
+      "name": "Maya Documentos",
+      "purpose": "Triar, classificar e encaminhar documentos; conteúdo factual via RAG.",
+      "tools": [
+        "knowledge.search",
+        "kanban.upsert_card"
+      ],
+      "memory": [
+        "short"
+      ],
+      "can_write": [
+        "documents",
+        "kanban"
+      ]
+    },
+    {
+      "id": "voice.agent",
+      "name": "Maya Voz",
+      "purpose": "Transcrever, sintetizar voz e encaminhar o turno ao orquestrador.",
+      "tools": [
+        "voice.transcribe.local",
+        "voice.synthesize.local",
+        "voice.callback"
+      ],
+      "memory": [
+        "short"
+      ],
+      "can_write": [
+        "conversation"
+      ]
+    },
+    {
+      "id": "handoff.agent",
+      "name": "Maya Handoff",
+      "purpose": "Preparar transferência para humano com resumo e histórico recente.",
+      "tools": [
+        "handoff.create",
+        "kanban.upsert_card"
+      ],
+      "memory": [
+        "short",
+        "long-read"
+      ],
+      "can_write": [
+        "handoff",
+        "kanban",
+        "conversation"
+      ]
+    }
   ],
   "routing": {
-    "calendar":["agenda","agendar","horário","horario","remarcar","reagendar","cancelar consulta","disponibilidade"],
-    "finance":["pagamento","cobrança","cobranca","pix","boleto","fatura","valor"],
-    "document":["documento","arquivo","pdf","exame","laudo","anexo"],
-    "handoff":["humano","atendente","pessoa","urgente","emergência","emergencia","reclamação","reclamacao"],
-    "crm":["lead","proposta","retorno","follow-up","follow up","cliente"],
-    "knowledge":["como funciona","informação","informacao","dúvida","duvida","procedimento","serviço","servico"]
+    "calendar": [
+      "agenda",
+      "agendar",
+      "horário",
+      "horario",
+      "remarcar",
+      "reagendar",
+      "cancelar consulta",
+      "disponibilidade"
+    ],
+    "finance": [
+      "pagamento",
+      "cobrança",
+      "cobranca",
+      "pix",
+      "boleto",
+      "fatura",
+      "valor"
+    ],
+    "document": [
+      "documento",
+      "arquivo",
+      "pdf",
+      "exame",
+      "laudo",
+      "anexo"
+    ],
+    "handoff": [
+      "humano",
+      "atendente",
+      "pessoa",
+      "urgente",
+      "emergência",
+      "emergencia",
+      "reclamação",
+      "reclamacao"
+    ],
+    "crm": [
+      "lead",
+      "proposta",
+      "retorno",
+      "follow-up",
+      "follow up",
+      "cliente"
+    ],
+    "knowledge": [
+      "como funciona",
+      "informação",
+      "informacao",
+      "dúvida",
+      "duvida",
+      "procedimento",
+      "serviço",
+      "servico"
+    ]
   },
-  "policy":{"paid_ai_fallback":false,"minimum_privilege":true,"financial_confirmation":true,"medical_diagnosis":false,"human_handoff_on_risk":true}
+  "policy": {
+    "paid_ai_fallback": false,
+    "minimum_privilege": true,
+    "financial_confirmation": true,
+    "medical_diagnosis": false,
+    "human_handoff_on_risk": true
+  }
 }

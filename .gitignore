@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+*.pyc
+*.log
+backups/
+exports/private/
+.DS_Store
+
+.local/
+.env

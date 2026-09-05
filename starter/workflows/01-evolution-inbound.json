@@ -1,0 +1,31 @@
+{
+  "name": "Starter 01 Evolution Inbound",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adapter/evolution/in",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "evolution-webhook",
+      "name": "Evolution Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0,0],
+      "webhookId": "evolution-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body??$json;const h=$json.headers??{};if($env.EVOLUTION_WEBHOOK_SECRET && h['x-assis-secret']!==$env.EVOLUTION_WEBHOOK_SECRET) throw new Error('unauthorized');const d=b.data??b;return [{json:{organization_slug:b.organization_slug??'default',channel:'whatsapp',contact:{external_id:d.key?.remoteJid??d.from??'',phone:d.key?.remoteJid??d.from??''},conversation_id:d.key?.remoteJid??d.from??'',message_id:d.key?.id??d.id??null,message_type:d.message?.audioMessage?'audio':'text',text:d.message?.conversation??d.message?.extendedTextMessage?.text??d.text??'',raw:b}}];"
+      },
+      "id": "verify-and-normalize",
+      "name": "Verify and Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260,0]
+    }
+  ],
+  "connections": {"Evolution Webhook":{"main":[[{"node":"Verify and Normalize","type":"main","index":0}]]}},
+  "pinData": {},"settings":{"executionOrder":"v1"},"active":false,"tags":[]
+}

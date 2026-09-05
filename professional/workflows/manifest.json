@@ -1,0 +1,1 @@
+{"pack":"professional","version":"0.3.0","extends":"starter@0.3.0","workflows":["11-voice-ingress.json","12-reminders.json","13-lead-recovery.json","14-documents.json","15-payments.json","16-chatwoot-handoff.json","17-local-stt.json","18-local-tts.json","19-voice-callback.json"],"mcp_refs":["voice.transcribe.local@1.0.0","voice.synthesize.local@1.0.0"]}

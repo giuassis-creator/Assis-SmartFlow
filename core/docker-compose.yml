@@ -73,8 +73,15 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_ALLOW_PAID_FALLBACK: ${AI_ALLOW_PAID_FALLBACK:-false}
       INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}
-    volumes: ["n8n_data:/home/node/.n8n"]
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../library:/opt/assis/library:ro
+      - ../starter:/opt/assis/starter:ro
+      - ../professional:/opt/assis/professional:ro
+      - ../enterprise:/opt/assis/enterprise:ro
+      - ../mcp:/opt/assis/mcp:ro
     networks: [frontend, backend]
+
 
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-0.33.3}
@@ -123,6 +130,15 @@ services:
     restart: unless-stopped
     volumes:
       - kokoro_cache:/root/.cache/huggingface
+    networks: [backend]
+
+  qa:
+    build:
+      context: ./qa
+    profiles: ["tools"]
+    volumes:
+      - ..:/workspace:ro
+    working_dir: /workspace
     networks: [backend]
 
   caddy:

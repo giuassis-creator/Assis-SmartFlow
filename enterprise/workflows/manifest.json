@@ -1,0 +1,1 @@
+{"pack":"enterprise","version":"0.2.0","extends":"professional@0.2.0","capabilities":["queue-mode","rbac","approval-policies","audit","retention","dlq","backup-restore","change-control"],"workflows":["21-rbac-gate.json","22-approval-gate.json","23-retention-job.json","24-dlq-retry.json"]}

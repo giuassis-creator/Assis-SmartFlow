@@ -1,0 +1,3 @@
+{
+  "name":"Starter 04 Calendar Availability","nodes":[{"parameters":{"httpMethod":"POST","path":"mcp/calendar/availability","responseMode":"lastNode","options":{}},"id":"calendar-availability","name":"Calendar Availability","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],"webhookId":"calendar-availability"},{"parameters":{"jsCode":"const b=$json.body??$json;if(!b.organization_id)throw new Error('organization_id required');return [{json:b}];"},"id":"validate-mcp-input","name":"Validate MCP Input","type":"n8n-nodes-base.code","typeVersion":2,"position":[260,0]}],"connections":{"Calendar Availability":{"main":[[{"node":"Validate MCP Input","type":"main","index":0}]]}},"pinData":{},"settings":{"executionOrder":"v1"},"active":false,"tags":[]
+}
