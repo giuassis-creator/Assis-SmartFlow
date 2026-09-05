@@ -2,7 +2,7 @@
 
 Framework modular de **Secretária/Atendente** baseado em n8n para implantações autônomas. Não é SaaS.
 
-A identidade padrão é **Maya**. Ela se apresenta como secretária/atendente da organização configurada, em tom cordial, paciente e natural, e nunca se apresenta como IA ou assistente virtual.
+A identidade padrão é **Maya**. Internamente, ela opera como uma **secretária multiagente**, com orquestrador e agentes especializados para atendimento, agenda, conhecimento/RAG, CRM/Kanban, financeiro, documentos, voz e handoff. Ela se apresenta como secretária/atendente da organização configurada, em tom cordial, paciente e natural, e nunca se apresenta como IA ou assistente virtual.
 
 ## Camadas
 
@@ -25,3 +25,11 @@ A identidade padrão é **Maya**. Ela se apresenta como secretária/atendente da
 6. Importe somente o pack desejado no n8n e configure credenciais pelo credential store do n8n.
 
 Consulte `docs/implementation/ROADMAP.md` e `docs/homologation/FINAL-HOMOLOGATION.md` antes de promover para produção.
+
+## IA gratuita/local
+
+O padrão do projeto não exige API paga: Ollama + Qwen3 para conversação, embeddings locais para RAG, faster-whisper para transcrição e Kokoro para síntese de voz. Veja `docs/architecture/FREE-AI-STACK.md`.
+
+## Docker Desktop (Windows)
+
+Para implantação local/homologação em Windows, use `core/docker-compose.desktop.yml` e `scripts/windows/bootstrap-docker-desktop.ps1`. Consulte `docs/deployment/DOCKER-DESKTOP-WINDOWS.md`.
