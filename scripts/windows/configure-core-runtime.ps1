@@ -179,40 +179,72 @@ $boundNodes = [int](Invoke-PostgresScalar $boundNodesSql)
 Write-Host "Nodes PostgreSQL vinculados à credencial real: $boundNodes"
 if ($boundNodes -eq 0) { throw 'Nenhum node PostgreSQL foi vinculado. Publicação interrompida.' }
 
-if (-not $SkipPublish) {
-  foreach ($workflowName in $safeWorkflowNames) {
-    $escapedName = $workflowName.Replace("'","''")
-    $workflowIdSql = @"
+$workflowIds = @()
+foreach ($workflowName in $safeWorkflowNames) {
+  $escapedName = $workflowName.Replace("'","''")
+  $workflowIdSql = @"
 SELECT id
 FROM workflow_entity
 WHERE name = '$escapedName'
 ORDER BY "updatedAt" DESC
 LIMIT 1;
 "@
-    $workflowId = Invoke-PostgresScalar $workflowIdSql
-    if ([string]::IsNullOrWhiteSpace($workflowId)) {
-      throw "Workflow seguro obrigatório não encontrado: $workflowName"
-    }
+  $workflowId = Invoke-PostgresScalar $workflowIdSql
+  if ([string]::IsNullOrWhiteSpace($workflowId)) {
+    throw "Workflow seguro obrigatório não encontrado: $workflowName"
+  }
+  $workflowIds += $workflowId
 
+  if (-not $SkipPublish) {
     Write-Host "Publicando: $workflowName ($workflowId)"
-    $publishOutput = & docker exec $n8nContainer n8n publish:workflow --id=$workflowId 2>&1
+    $publishOutput = & docker exec -u node $n8nContainer n8n publish:workflow --id=$workflowId 2>&1
     if ($LASTEXITCODE -ne 0) {
       throw "Falha ao publicar '$workflowName':`n$($publishOutput -join "`n")"
     }
+    if (($publishOutput -join "`n") -match '(?i)error|failed|not found') {
+      throw "Publicação de '$workflowName' retornou erro:`n$($publishOutput -join "`n")"
+    }
   }
+}
 
+if (-not $SkipPublish) {
   Write-Host 'Reiniciando somente o n8n para aplicar publicação e webhooks...'
   & docker compose @compose restart n8n
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao reiniciar o n8n.' }
-  Start-Sleep -Seconds 5
+  Start-Sleep -Seconds 8
+  $n8nContainer = Get-ComposeContainer 'n8n'
 }
 
-$publishedCountSql = @'
+$idsSql = ($workflowIds | ForEach-Object { "'$($_.Replace("'","''"))'" }) -join ','
+$activeCountSql = @"
 SELECT count(*)
-FROM workflow_published_version wpv
-JOIN workflow_entity we ON we.id = wpv."workflowId";
-'@
-$publishedCount = [int](Invoke-PostgresScalar $publishedCountSql)
-Write-Host "Workflows publicados na instância: $publishedCount"
-Write-Host 'PASS: núcleo Assis SmartFlow configurado com PostgreSQL e publicação controlada.'
+FROM workflow_entity
+WHERE id IN ($idsSql)
+  AND "activeVersionId" IS NOT NULL;
+"@
+$activeCount = [int](Invoke-PostgresScalar $activeCountSql)
+Write-Host "Workflows do núcleo com activeVersionId: $activeCount/$($workflowIds.Count)"
+if ($activeCount -ne $workflowIds.Count) {
+  $stateSql = @"
+SELECT name || '|' || id || '|activeVersionId=' || COALESCE("activeVersionId"::text,'NULL')
+FROM workflow_entity
+WHERE id IN ($idsSql)
+ORDER BY name;
+"@
+  $state = & docker exec --env "ASSIS_SQL=$stateSql" $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
+  throw "Nem todos os workflows foram publicados. Estado atual:`n$($state -join "`n")"
+}
+
+$webhookCountSql = @"
+SELECT count(*)
+FROM webhook_entity
+WHERE "workflowId" IN ($idsSql);
+"@
+$webhookCount = [int](Invoke-PostgresScalar $webhookCountSql)
+Write-Host "Webhooks registrados para o núcleo: $webhookCount"
+if ($webhookCount -eq 0) {
+  throw 'Nenhum webhook do núcleo foi registrado após a publicação/restart. Homologação interrompida.'
+}
+
+Write-Host 'PASS: núcleo Assis SmartFlow configurado, publicado e com webhooks registrados.'
 Write-Host 'Adapters externos de Calendar, WhatsApp, Asaas e telefonia permaneceram fora desta publicação automática.'
