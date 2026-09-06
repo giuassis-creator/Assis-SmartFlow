@@ -4,10 +4,10 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
 $markerDir = Join-Path $root '.local'
-$marker = Join-Path $markerDir 'workflow-import-v2.done'
+$marker = Join-Path $markerDir 'workflow-import-v3.done'
 $tempDir = Join-Path $markerDir 'workflow-import'
 if ((Test-Path $marker) -and -not $Force) {
-  Write-Host 'Workflows já importados neste clone. Use -Force apenas se você souber que deseja reimportá-los.'
+  Write-Host 'Workflows já importados neste clone. Use -Force apenas para revalidar/reimportar com IDs estáveis.'
   exit 0
 }
 New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
@@ -41,18 +41,13 @@ function Test-DockerEngine {
   return @{ Ok = ($code -eq 0 -and $output); Output = ($output -join "`n") }
 }
 
+# Do not force DOCKER_API_VERSION here. Docker Desktop/CLI should negotiate the
+# highest mutually supported API. A pinned version in the parent shell is honored
+# but never changed by this script.
 $dockerCheck = Test-DockerEngine
 if (-not $dockerCheck.Ok) {
-  Write-Warning 'Docker Desktop não respondeu à negociação normal da API.'
   Write-Host $dockerCheck.Output
-  if (-not $env:DOCKER_API_VERSION) {
-    Write-Host 'Tentando compatibilidade temporária com Docker Engine API v1.51...'
-    $env:DOCKER_API_VERSION = '1.51'
-    $dockerCheck = Test-DockerEngine
-  }
-}
-if (-not $dockerCheck.Ok) {
-  throw "Docker Desktop Linux Engine não está respondendo corretamente. Reinicie o Docker Desktop e confirme com 'docker version' e 'docker ps'. Não use docker compose down -v."
+  throw "Docker Desktop Linux Engine não está respondendo. Abra/reinicie o Docker Desktop e confirme com 'docker version' e 'docker ps'. Se DOCKER_API_VERSION estiver definido manualmente, remova com: Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue. Não use docker compose down -v."
 }
 
 $n8nOutput = & docker compose @compose ps -q n8n 2>&1
