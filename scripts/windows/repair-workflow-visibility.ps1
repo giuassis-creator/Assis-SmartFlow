@@ -101,7 +101,14 @@ DO UPDATE SET role='workflow:owner',"updatedAt"=CURRENT_TIMESTAMP;
 "@
 Invoke-Postgres $repairSql | Write-Host
 
-$sharedSql = "WITH wanted(id) AS (VALUES $values) SELECT count(*) FROM shared_workflow sw JOIN wanted w ON w.id=sw.\"workflowId\" WHERE sw.\"projectId\"='$escapedProject' AND sw.role='workflow:owner';"
+$sharedSql = @"
+WITH wanted(id) AS (VALUES $values)
+SELECT count(*)
+FROM shared_workflow sw
+JOIN wanted w ON w.id = sw."workflowId"
+WHERE sw."projectId" = '$escapedProject'
+  AND sw.role = 'workflow:owner';
+"@
 $sharedCount = [int](Invoke-PostgresScalar $sharedSql)
 Write-Host "Ownership workflow:owner confirmado: $sharedCount/$($workflowIds.Count)"
 if ($sharedCount -ne $workflowIds.Count) {
@@ -113,6 +120,7 @@ Write-Host 'Reiniciando somente o serviço n8n para limpar estado em memória...
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao reiniciar o serviço n8n.' }
 
 Start-Sleep -Seconds 3
+$n8nContainer = Get-ComposeContainer 'n8n'
 $listOutput = & docker exec $n8nContainer n8n list:workflow 2>&1
 if ($LASTEXITCODE -ne 0 -or (($listOutput -join "`n") -match 'No workflows found')) {
   throw "O CLI não conseguiu listar os workflows após o reparo:`n$($listOutput -join "`n")"
