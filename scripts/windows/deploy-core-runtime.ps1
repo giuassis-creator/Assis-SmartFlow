@@ -27,27 +27,26 @@ function Show-CoreDiagnostics {
 SELECT we.name,
        we.id,
        we."activeVersionId",
-       wh."httpMethod",
-       wh."path",
-       wh."webhookId"
+       COALESCE(jsonb_agg(to_jsonb(wh)) FILTER (WHERE wh."workflowId" IS NOT NULL), '[]'::jsonb) AS webhooks
 FROM workflow_entity we
 LEFT JOIN webhook_entity wh ON wh."workflowId" = we.id
 WHERE we."activeVersionId" IS NOT NULL
   AND (
     we.name LIKE 'Internal %'
-    OR we.name LIKE 'Library Agent Runtime'
-    OR we.name LIKE 'Starter 07 Maya Multi-Agent Orchestrator'
+    OR we.name = 'Library Agent Runtime'
+    OR we.name = 'Starter 07 Maya Multi-Agent Orchestrator'
     OR we.name IN ('01 Canonical Ingress','02 Context Load','03 Memory Write','04 Handoff','05 Kanban Upsert','06 RAG Ingest','07 RAG Search','08 DLQ Capture','11 CRM Upsert Contact','12 CRM Update Stage')
   )
-ORDER BY we.name, wh.path;
+GROUP BY we.name, we.id, we."activeVersionId"
+ORDER BY we.name;
 '@
-    Write-Host 'Rotas registradas em webhook_entity:'
+    Write-Host 'Estado publicado e registros brutos de webhook_entity:'
     & docker exec --env "ASSIS_SQL=$sql" $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "$ASSIS_SQL"' | Out-Host
   }
 
   if ($n8nContainer) {
     Write-Host 'Últimas linhas do log do n8n:'
-    & docker logs --tail 120 $n8nContainer 2>&1 | Out-Host
+    & docker logs --tail 180 $n8nContainer 2>&1 | Out-Host
   }
 }
 
@@ -62,10 +61,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração do Core Runtime.' }
 
 if (-not $SkipSmoke) {
   Write-Host '3/3 Executando homologação integrada do núcleo...'
+  Write-Host 'Aguardando o n8n concluir o carregamento das rotas de produção (até 120s)...'
   & docker compose @compose run --rm qa python scripts/smoke_core_runtime.py
   if ($LASTEXITCODE -ne 0) {
     Show-CoreDiagnostics
-    throw 'Homologação do Core Runtime falhou. O diagnóstico acima mostra as rotas registradas e o log do n8n.'
+    throw 'Homologação do Core Runtime falhou. O diagnóstico acima mostra o estado publicado, webhooks e log do n8n.'
   }
 } else {
   Write-Host '3/3 Smoke test ignorado por parâmetro.'
