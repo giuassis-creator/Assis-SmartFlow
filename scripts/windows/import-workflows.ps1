@@ -44,7 +44,7 @@ function Test-DockerEngine {
 function Get-ComposeContainer([string]$Service) {
   $out = & docker compose @compose ps -q $Service 2>&1
   if ($LASTEXITCODE -ne 0) {
-    throw "Falha ao consultar o serviço $Service:`n$($out -join "`n")"
+    throw "Falha ao consultar o serviço ${Service}:`n$($out -join "`n")"
   }
   return (($out | Where-Object { $_ }) -join '').Trim()
 }
