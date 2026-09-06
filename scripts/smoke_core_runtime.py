@@ -26,14 +26,36 @@ def post(path, payload, headers=None, timeout=180):
         raise RuntimeError(f'{path} unreachable: {exc}') from exc
 
 
+def wait_for_production_webhook(path, payload, timeout=120):
+    deadline = time.time() + timeout
+    last_error = None
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            status, data = post(path, payload, timeout=15)
+            if status == 200:
+                print(f'Production webhook ready after {attempt} attempt(s).')
+                return status, data
+        except Exception as exc:
+            last_error = exc
+        time.sleep(3)
+    raise RuntimeError(
+        f'n8n production webhook did not become ready within {timeout}s: {last_error}'
+    )
+
+
 def require(cond, message):
     if not cond:
         raise RuntimeError(message)
 
 
 def main():
-    print('Tool noop...')
-    status, noop = post('/webhook/assis/internal/tool/noop', {'blocked': True, 'reason': 'smoke', 'tool': None})
+    print('Waiting for n8n production webhook registration...')
+    status, noop = wait_for_production_webhook(
+        '/webhook/assis/internal/tool/noop',
+        {'blocked': True, 'reason': 'smoke-readiness', 'tool': None},
+    )
     require(status == 200, 'Tool noop did not return 200')
     require(isinstance(noop, dict) and noop.get('executed') is False, f'Unexpected noop response: {noop!r}')
 
