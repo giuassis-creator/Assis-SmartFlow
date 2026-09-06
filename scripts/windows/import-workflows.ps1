@@ -35,8 +35,34 @@ function Get-DeterministicGuid([string]$Text) {
   return ([Guid]::new($bytes)).ToString()
 }
 
-$n8nContainer = (& docker compose @compose ps -q n8n).Trim()
-if (-not $n8nContainer) { throw 'Container n8n não está em execução.' }
+function Test-DockerEngine {
+  $output = & docker version --format '{{json .Server}}' 2>&1
+  $code = $LASTEXITCODE
+  return @{ Ok = ($code -eq 0 -and $output); Output = ($output -join "`n") }
+}
+
+$dockerCheck = Test-DockerEngine
+if (-not $dockerCheck.Ok) {
+  Write-Warning 'Docker Desktop não respondeu à negociação normal da API.'
+  Write-Host $dockerCheck.Output
+  if (-not $env:DOCKER_API_VERSION) {
+    Write-Host 'Tentando compatibilidade temporária com Docker Engine API v1.51...'
+    $env:DOCKER_API_VERSION = '1.51'
+    $dockerCheck = Test-DockerEngine
+  }
+}
+if (-not $dockerCheck.Ok) {
+  throw "Docker Desktop Linux Engine não está respondendo corretamente. Reinicie o Docker Desktop e confirme com 'docker version' e 'docker ps'. Não use docker compose down -v."
+}
+
+$n8nOutput = & docker compose @compose ps -q n8n 2>&1
+if ($LASTEXITCODE -ne 0) {
+  throw "Falha ao consultar o serviço n8n no Docker Desktop:`n$($n8nOutput -join "`n")"
+}
+$n8nContainer = (($n8nOutput | Where-Object { $_ }) -join '').Trim()
+if (-not $n8nContainer) {
+  throw "Container n8n não está em execução. Execute: docker compose --env-file .env -f core/docker-compose.yml -f core/docker-compose.desktop.yml up -d n8n"
+}
 
 foreach ($entry in $imports) {
   $hostDir = Join-Path $root $entry.Host
