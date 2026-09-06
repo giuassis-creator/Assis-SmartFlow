@@ -50,7 +50,7 @@ function Get-ComposeContainer([string]$Service) {
 }
 
 function Invoke-PostgresScalar([string]$Sql) {
-  $result = & docker exec $postgresContainer sh -lc "psql -v ON_ERROR_STOP=1 -U \"`$POSTGRES_USER\" -d \"`$POSTGRES_DB\" -Atc '$Sql'" 2>&1
+  $result = & docker exec $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' --env "ASSIS_SQL=$Sql" 2>&1
   if ($LASTEXITCODE -ne 0) {
     throw "Falha ao consultar PostgreSQL:`n$($result -join "`n")"
   }
