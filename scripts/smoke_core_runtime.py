@@ -84,12 +84,13 @@ def main():
     require(search.get('count', 0) >= 1, f'RAG smoke marker not found: {search!r}')
 
     if TOKEN:
+        auth = {'x-assis-internal-token': TOKEN}
         print('Policy gateway no-tool path...')
         status, policy = post('/webhook/assis/internal/tool/execute', {
             'agent_id': 'reception.agent',
             'tool_call': None,
             'trace_id': marker,
-        }, {'x-assis-internal-token': TOKEN})
+        }, auth)
         require(status == 200, 'Policy gateway did not return 200')
         require(isinstance(policy, dict) and policy.get('executed') is False, f'Unexpected policy response: {policy!r}')
 
@@ -98,7 +99,7 @@ def main():
             'text': 'Olá, gostaria de saber como vocês podem me ajudar.',
             'organization_id': org,
             'trace_id': marker,
-        }, timeout=240)
+        }, auth, timeout=240)
         require(status == 200, 'Maya orchestrator did not return 200')
         require(isinstance(maya, dict), f'Unexpected Maya response: {maya!r}')
         require(maya.get('orchestrated') is True, f'Maya was not orchestrated: {maya!r}')
