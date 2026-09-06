@@ -4,7 +4,7 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
 $markerDir = Join-Path $root '.local'
-$marker = Join-Path $markerDir 'workflow-import-v5.done'
+$marker = Join-Path $markerDir 'workflow-import-v6.done'
 $tempDir = Join-Path $markerDir 'workflow-import'
 if ((Test-Path $marker) -and -not $Force) {
   Write-Host 'Workflows já importados e validados neste clone. Use -Force apenas para revalidar/reimportar.'
@@ -68,10 +68,6 @@ $postgresContainer = Get-ComposeContainer 'postgres'
 if (-not $n8nContainer) { throw 'Container n8n não está em execução.' }
 if (-not $postgresContainer) { throw 'Container postgres não está em execução.' }
 
-# n8n 2.x exposes workflows through projects. Prefer the owner's personal
-# project when it exists. If setup has not created any project yet, fall back to
-# the legacy import path so the CLI can still create workflows; ownership can be
-# established after the first owner login.
 $projectId = Invoke-PostgresScalar 'SELECT p.id FROM project p JOIN project_relation pr ON pr."projectId"=p.id WHERE pr.role=''project:personalOwner'' ORDER BY p."createdAt" LIMIT 1;'
 if (-not $projectId) {
   $projectId = Invoke-PostgresScalar 'SELECT id FROM project ORDER BY "createdAt" LIMIT 1;'
@@ -139,7 +135,8 @@ if (-not [int]::TryParse($dbCountText, [ref]$dbCount) -or $dbCount -lt 1) {
 }
 
 if ($useProjectId) {
-  $sharedCountText = Invoke-PostgresScalar "SELECT count(*) FROM shared_workflow WHERE \"projectId\"='$projectId';"
+  $sharedSql = 'SELECT count(*) FROM shared_workflow WHERE "projectId"=''' + $projectId.Replace("'", "''") + ''';'
+  $sharedCountText = Invoke-PostgresScalar $sharedSql
   [int]$sharedCount = 0
   if (-not [int]::TryParse($sharedCountText, [ref]$sharedCount) -or $sharedCount -lt 1) {
     throw "Workflows existem no banco, mas não foram associados ao projeto $projectId (shared_workflow count=$sharedCountText). Marcador NÃO foi criado."
