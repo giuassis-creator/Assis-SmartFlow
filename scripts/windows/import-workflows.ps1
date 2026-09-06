@@ -4,7 +4,7 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
 $markerDir = Join-Path $root '.local'
-$marker = Join-Path $markerDir 'workflow-import-v4.done'
+$marker = Join-Path $markerDir 'workflow-import-v5.done'
 $tempDir = Join-Path $markerDir 'workflow-import'
 if ((Test-Path $marker) -and -not $Force) {
   Write-Host 'Workflows já importados e validados neste clone. Use -Force apenas para revalidar/reimportar.'
@@ -50,7 +50,7 @@ function Get-ComposeContainer([string]$Service) {
 }
 
 function Invoke-PostgresScalar([string]$Sql) {
-  $result = & docker exec $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' --env "ASSIS_SQL=$Sql" 2>&1
+  $result = & docker exec --env "ASSIS_SQL=$Sql" $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
   if ($LASTEXITCODE -ne 0) {
     throw "Falha ao consultar PostgreSQL:`n$($result -join "`n")"
   }
@@ -68,16 +68,20 @@ $postgresContainer = Get-ComposeContainer 'postgres'
 if (-not $n8nContainer) { throw 'Container n8n não está em execução.' }
 if (-not $postgresContainer) { throw 'Container postgres não está em execução.' }
 
-# n8n 2.x associates workflows with projects. Import explicitly into the
-# instance owner's personal project so the UI and CLI can see the workflows.
+# n8n 2.x exposes workflows through projects. Prefer the owner's personal
+# project when it exists. If setup has not created any project yet, fall back to
+# the legacy import path so the CLI can still create workflows; ownership can be
+# established after the first owner login.
 $projectId = Invoke-PostgresScalar 'SELECT p.id FROM project p JOIN project_relation pr ON pr."projectId"=p.id WHERE pr.role=''project:personalOwner'' ORDER BY p."createdAt" LIMIT 1;'
 if (-not $projectId) {
   $projectId = Invoke-PostgresScalar 'SELECT id FROM project ORDER BY "createdAt" LIMIT 1;'
 }
-if (-not $projectId) {
-  throw 'Nenhum projeto n8n foi encontrado. Faça login no n8n e conclua a criação do usuário owner antes de importar workflows.'
+$useProjectId = -not [string]::IsNullOrWhiteSpace($projectId)
+if ($useProjectId) {
+  Write-Host "Projeto n8n de destino: $projectId"
+} else {
+  Write-Warning 'Nenhum projeto n8n existe ainda. Importando sem --projectId. Após concluir o setup/login do owner, reexecute este script com -Force para associar os workflows ao projeto pessoal.'
 }
-Write-Host "Projeto n8n de destino: $projectId"
 
 $filesToImport = @()
 foreach ($entry in $imports) {
@@ -120,22 +124,26 @@ foreach ($item in $filesToImport) {
   & docker cp $tempFile "${n8nContainer}:$containerFile"
   if ($LASTEXITCODE -ne 0) { throw "Falha ao copiar workflow: $relativePath" }
 
-  & docker exec $n8nContainer n8n import:workflow "--input=$containerFile" "--projectId=$projectId"
+  if ($useProjectId) {
+    & docker exec $n8nContainer n8n import:workflow "--input=$containerFile" "--projectId=$projectId"
+  } else {
+    & docker exec $n8nContainer n8n import:workflow "--input=$containerFile"
+  }
   if ($LASTEXITCODE -ne 0) { throw "Falha ao importar workflow: $relativePath" }
 }
 
-# Never mark success based only on process exit codes. Confirm persistence in
-# n8n's PostgreSQL database and visibility through the n8n server CLI.
 $dbCountText = Invoke-PostgresScalar 'SELECT count(*) FROM workflow_entity;'
 [int]$dbCount = 0
 if (-not [int]::TryParse($dbCountText, [ref]$dbCount) -or $dbCount -lt 1) {
   throw "Importação não persistiu workflows em workflow_entity (count=$dbCountText). Marcador de sucesso NÃO foi criado."
 }
 
-$sharedCountText = Invoke-PostgresScalar "SELECT count(*) FROM shared_workflow WHERE \"projectId\"='$projectId';"
-[int]$sharedCount = 0
-if (-not [int]::TryParse($sharedCountText, [ref]$sharedCount) -or $sharedCount -lt 1) {
-  throw "Workflows existem no banco, mas não foram associados ao projeto $projectId (shared_workflow count=$sharedCountText). Marcador NÃO foi criado."
+if ($useProjectId) {
+  $sharedCountText = Invoke-PostgresScalar "SELECT count(*) FROM shared_workflow WHERE \"projectId\"='$projectId';"
+  [int]$sharedCount = 0
+  if (-not [int]::TryParse($sharedCountText, [ref]$sharedCount) -or $sharedCount -lt 1) {
+    throw "Workflows existem no banco, mas não foram associados ao projeto $projectId (shared_workflow count=$sharedCountText). Marcador NÃO foi criado."
+  }
 }
 
 $listOutput = & docker exec $n8nContainer n8n list:workflow 2>&1
@@ -146,5 +154,9 @@ if ($listCode -ne 0 -or $listText -match 'No workflows found') {
 }
 
 Set-Content -Path $marker -Value (Get-Date).ToString('o') -Encoding ascii
-Write-Host "PASS: $dbCount workflow(s) persistidos; $sharedCount associado(s) ao projeto $projectId."
+if ($useProjectId) {
+  Write-Host "PASS: $dbCount workflow(s) persistidos e associados ao projeto $projectId."
+} else {
+  Write-Host "PASS: $dbCount workflow(s) persistidos e visíveis no CLI. Nenhum projeto n8n existe ainda; finalize o setup do owner e depois reexecute com -Force."
+}
 Write-Host 'Workflows importados e validados. Eles permanecem desativados por segurança até as credenciais/provedores serem configurados.'
