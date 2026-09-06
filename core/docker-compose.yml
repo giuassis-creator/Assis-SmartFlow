@@ -34,7 +34,8 @@ services:
   qdrant:
     image: qdrant/qdrant:${QDRANT_VERSION:-v1.15.1}
     restart: unless-stopped
-    volumes: ["qdrant_data:/qdrant/storage"]
+    volumes:
+      - qdrant_data:/qdrant/storage
     networks: [backend]
 
   n8n:
@@ -139,6 +140,8 @@ services:
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:4b-instruct}
       TTS_VOICE: ${TTS_VOICE:-pf_dora}
+      INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}
+      N8N_INTERNAL_URL: http://n8n:5678
     volumes:
       - ..:/workspace:ro
     working_dir: /workspace
