@@ -52,15 +52,19 @@ ORDER BY we.name;
 }
 
 Write-Host '=== Assis SmartFlow Core Runtime ==='
-Write-Host '1/4 Validando serviços Docker...'
+Write-Host '1/5 Validando serviços Docker...'
 & docker compose @compose ps | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao consultar Docker Compose.' }
 
-Write-Host '2/4 Sincronizando workflows do repositório com o n8n...'
+Write-Host '2/5 Aplicando hardening de rede e proxy...'
+& "$PSScriptRoot\apply-network-hardening.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao aplicar hardening de rede/proxy.' }
+
+Write-Host '3/5 Sincronizando workflows do repositório com o n8n...'
 & "$PSScriptRoot\import-workflows.ps1" -Force
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao sincronizar workflows com o n8n.' }
 
-Write-Host '3/4 Configurando autenticação interna, vinculando credenciais e publicando núcleo seguro...'
+Write-Host '4/5 Configurando autenticação interna, vinculando credenciais e publicando núcleo seguro...'
 & "$PSScriptRoot\configure-internal-auth.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração da autenticação interna.' }
 & "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish:$SkipPublish
@@ -71,7 +75,7 @@ if (-not $SkipPublish) {
 }
 
 if (-not $SkipSmoke) {
-  Write-Host '4/4 Executando homologação integrada do núcleo...'
+  Write-Host '5/5 Executando homologação integrada do núcleo...'
   Write-Host 'Atualizando imagem QA para refletir dependências e testes atuais...'
   & docker compose @compose build qa | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir a imagem QA.' }
@@ -82,10 +86,10 @@ if (-not $SkipSmoke) {
     throw 'Homologação do Core Runtime falhou. O diagnóstico acima mostra o estado publicado, webhooks e log do n8n.'
   }
 } else {
-  Write-Host '4/4 Smoke test ignorado por parâmetro.'
+  Write-Host '5/5 Smoke test ignorado por parâmetro.'
 }
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + superfície de rede endurecida + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
 Write-Host 'Adapters externos continuam desativados até configuração das credenciais/provider adapters.'
