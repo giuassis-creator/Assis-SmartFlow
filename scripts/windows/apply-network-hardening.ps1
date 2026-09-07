@@ -3,16 +3,36 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
 
-Write-Host 'Aplicando hardening de rede sem remover volumes e sem reiniciar dependências persistentes...'
-# IMPORTANT: do not let Compose recreate/restart postgres/redis as dependencies here.
-# The hardening changes only host port bindings for these application services and Caddy.
-$services = @('n8n','ollama','qdrant','stt','tts','caddy')
-& docker compose @compose up -d --force-recreate --no-deps @services | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao recriar containers para aplicar o hardening de rede.' }
+function Get-ServiceContainer([string]$Service) {
+  $containerId = ((& docker compose @compose ps -q $Service 2>&1 | Where-Object { $_ }) -join '').Trim()
+  return $containerId
+}
 
+Write-Host 'Aplicando hardening de rede sem remover volumes e sem reiniciar serviços já endurecidos...'
 $internalServices = @('n8n','ollama','qdrant','stt','tts')
+$needsRecreate = @()
 foreach ($service in $internalServices) {
-  $containerId = ((& docker compose @compose ps -q $service 2>&1 | Where-Object { $_ }) -join '').Trim()
+  $containerId = Get-ServiceContainer $service
+  if (-not $containerId) {
+    $needsRecreate += $service
+    continue
+  }
+  $published = (& docker port $containerId 2>&1 | Where-Object { $_ }) -join "`n"
+  if (-not [string]::IsNullOrWhiteSpace($published)) {
+    $needsRecreate += $service
+  }
+}
+
+if ($needsRecreate.Count -gt 0) {
+  Write-Host "Removendo bindings de host apenas de: $($needsRecreate -join ', ')"
+  & docker compose @compose up -d --force-recreate --no-deps @needsRecreate | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Falha ao recriar containers que ainda possuíam portas publicadas.' }
+} else {
+  Write-Host 'PASS: serviços internos já estavam endurecidos; nenhum restart desnecessário foi feito.'
+}
+
+foreach ($service in $internalServices) {
+  $containerId = Get-ServiceContainer $service
   if (-not $containerId) { throw "Container do serviço $service não está em execução." }
   $published = (& docker port $containerId 2>&1 | Where-Object { $_ }) -join "`n"
   if (-not [string]::IsNullOrWhiteSpace($published)) {
@@ -21,10 +41,18 @@ foreach ($service in $internalServices) {
   Write-Host "PASS: $service sem porta publicada no host."
 }
 
-$caddyId = ((& docker compose @compose ps -q caddy 2>&1 | Where-Object { $_ }) -join '').Trim()
+$caddyId = Get-ServiceContainer 'caddy'
+if (-not $caddyId) {
+  & docker compose @compose up -d --no-deps caddy | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar o Caddy.' }
+  $caddyId = Get-ServiceContainer 'caddy'
+}
 if (-not $caddyId) { throw 'Container caddy não está em execução.' }
+
 & docker exec $caddyId caddy validate --config /etc/caddy/Caddyfile | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Caddyfile inválido após hardening.' }
+& docker exec $caddyId caddy reload --config /etc/caddy/Caddyfile | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao recarregar o Caddyfile endurecido.' }
 
 $deadline = (Get-Date).AddSeconds(60)
 $statusCode = ''
