@@ -60,7 +60,9 @@ Write-Host '2/4 Sincronizando workflows do repositório com o n8n...'
 & "$PSScriptRoot\import-workflows.ps1" -Force
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao sincronizar workflows com o n8n.' }
 
-Write-Host '3/4 Vinculando credenciais e publicando núcleo seguro...'
+Write-Host '3/4 Configurando autenticação interna, vinculando credenciais e publicando núcleo seguro...'
+& "$PSScriptRoot\configure-internal-auth.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração da autenticação interna.' }
 & "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish:$SkipPublish
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração do Core Runtime.' }
 
@@ -81,5 +83,5 @@ if (-not $SkipSmoke) {
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
 Write-Host 'Adapters externos continuam desativados até configuração das credenciais/provider adapters.'
