@@ -116,13 +116,13 @@ foreach ($item in $filesToImport) {
   $workflow = $raw | ConvertFrom-Json -Depth 100
 
   if (-not $workflow.PSObject.Properties['id'] -or [string]::IsNullOrWhiteSpace([string]$workflow.id)) {
-    $workflow | Add-Member -NotePropertyName id -NotePropertyValue (Get-DeterministicGuid "assis-workflow:$relativePath") -Force
+    $workflow | Add-Member -NotePropertyName id -NotePropertyValue (Get-DeterministicGuid "assis-workflow:${relativePath}") -Force
   }
 
   # O versionId precisa mudar quando o conteúdo do workflow muda. Mantê-lo fixo por caminho
   # faz o n8n 2.x poder continuar publicando/executando um snapshot antigo em workflow_history.
   $contentHash = Get-Sha256Hex $raw
-  $workflow | Add-Member -NotePropertyName versionId -NotePropertyValue (Get-DeterministicGuid "assis-version:$relativePath:$contentHash") -Force
+  $workflow | Add-Member -NotePropertyName versionId -NotePropertyValue (Get-DeterministicGuid "assis-version:${relativePath}:${contentHash}") -Force
 
   $safeName = ($relativePath -replace '[^a-z0-9._-]','_')
   $tempFile = Join-Path $tempDir $safeName
