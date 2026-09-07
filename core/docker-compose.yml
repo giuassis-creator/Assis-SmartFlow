@@ -142,6 +142,10 @@ services:
       TTS_VOICE: ${TTS_VOICE:-pf_dora}
       INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}
       N8N_INTERNAL_URL: http://n8n:5678
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ..:/workspace:ro
     working_dir: /workspace
