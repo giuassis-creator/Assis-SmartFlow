@@ -4,7 +4,7 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
 $markerDir = Join-Path $root '.local'
-$marker = Join-Path $markerDir 'workflow-import-v6.done'
+$marker = Join-Path $markerDir 'workflow-import-v7.done'
 $tempDir = Join-Path $markerDir 'workflow-import'
 if ((Test-Path $marker) -and -not $Force) {
   Write-Host 'Workflows já importados e validados neste clone. Use -Force apenas para revalidar/reimportar.'
@@ -33,6 +33,16 @@ function Get-DeterministicGuid([string]$Text) {
   $bytes = New-Object byte[] 16
   [Array]::Copy($hash, 0, $bytes, 0, 16)
   return ([Guid]::new($bytes)).ToString()
+}
+
+function Get-Sha256Hex([string]$Text) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))
+  } finally {
+    $sha.Dispose()
+  }
+  return -join ($hash | ForEach-Object { $_.ToString('x2') })
 }
 
 function Test-DockerEngine {
@@ -102,21 +112,24 @@ foreach ($item in $filesToImport) {
   $entry = $item.Entry
   $file = $item.File
   $relativePath = ($entry.Host + '/' + $file.Name).Replace('\\','/').ToLowerInvariant()
-  $workflow = Get-Content -Raw -Path $file.FullName | ConvertFrom-Json -Depth 100
+  $raw = Get-Content -Raw -Path $file.FullName
+  $workflow = $raw | ConvertFrom-Json -Depth 100
 
   if (-not $workflow.PSObject.Properties['id'] -or [string]::IsNullOrWhiteSpace([string]$workflow.id)) {
     $workflow | Add-Member -NotePropertyName id -NotePropertyValue (Get-DeterministicGuid "assis-workflow:$relativePath") -Force
   }
-  if (-not $workflow.PSObject.Properties['versionId'] -or [string]::IsNullOrWhiteSpace([string]$workflow.versionId)) {
-    $workflow | Add-Member -NotePropertyName versionId -NotePropertyValue (Get-DeterministicGuid "assis-version:$relativePath") -Force
-  }
+
+  # O versionId precisa mudar quando o conteúdo do workflow muda. Mantê-lo fixo por caminho
+  # faz o n8n 2.x poder continuar publicando/executando um snapshot antigo em workflow_history.
+  $contentHash = Get-Sha256Hex $raw
+  $workflow | Add-Member -NotePropertyName versionId -NotePropertyValue (Get-DeterministicGuid "assis-version:$relativePath:$contentHash") -Force
 
   $safeName = ($relativePath -replace '[^a-z0-9._-]','_')
   $tempFile = Join-Path $tempDir $safeName
   $workflow | ConvertTo-Json -Depth 100 -Compress | Set-Content -Path $tempFile -Encoding utf8
   $containerFile = "/tmp/assis-import/$safeName"
 
-  Write-Host "  -> $relativePath [$($workflow.id)]"
+  Write-Host "  -> $relativePath [$($workflow.id)] version=$($workflow.versionId)"
   & docker cp $tempFile "${n8nContainer}:$containerFile"
   if ($LASTEXITCODE -ne 0) { throw "Falha ao copiar workflow: $relativePath" }
 
