@@ -65,6 +65,10 @@ Write-Host '3/4 Configurando autenticação interna, vinculando credenciais e pu
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração da autenticação interna.' }
 & "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish:$SkipPublish
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração do Core Runtime.' }
+if (-not $SkipPublish) {
+  & "$PSScriptRoot\publish-internal-auth.ps1"
+  if ($LASTEXITCODE -ne 0) { throw 'Falha ao publicar o verificador de autenticação interna.' }
+}
 
 if (-not $SkipSmoke) {
   Write-Host '4/4 Executando homologação integrada do núcleo...'
