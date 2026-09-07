@@ -1,0 +1,20 @@
+services:
+  n8n:
+    ports:
+      - "127.0.0.1:5678:5678"
+  ollama:
+    ports:
+      - "127.0.0.1:11434:11434"
+  qdrant:
+    ports:
+      - "127.0.0.1:6333:6333"
+  stt:
+    ports:
+      - "127.0.0.1:8000:8000"
+  tts:
+    ports:
+      - "127.0.0.1:7860:7860"
+
+# Optional troubleshooting override.
+# These ports bind only to the local Windows host and are not exposed on the LAN.
+# Use together with docker-compose.yml and docker-compose.desktop.yml only when needed.
