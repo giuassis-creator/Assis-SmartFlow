@@ -94,21 +94,24 @@ def main():
         require(status == 200, 'Policy gateway did not return 200')
         require(isinstance(policy, dict) and policy.get('executed') is False, f'Unexpected policy response: {policy!r}')
 
-        print('Maya multi-agent orchestrator + local Ollama...')
+        print('Maya multi-agent orchestrator + automatic RAG + local Ollama...')
         status, maya = post('/webhook/assis/v1/maya/orchestrate', {
-            'text': 'Olá, gostaria de saber como vocês podem me ajudar.',
+            'text': f'O que você sabe sobre {marker}?',
             'organization_id': org,
             'trace_id': marker,
-        }, auth, timeout=240)
+        }, auth, timeout=300)
         require(status == 200, 'Maya orchestrator did not return 200')
         require(isinstance(maya, dict), f'Unexpected Maya response: {maya!r}')
         require(maya.get('orchestrated') is True, f'Maya was not orchestrated: {maya!r}')
         require(bool(maya.get('response')), f'Maya returned an empty response: {maya!r}')
         require(maya.get('provider') == 'ollama', f'Maya did not use local Ollama: {maya!r}')
+        require(maya.get('rag_count', 0) >= 1, f'Maya did not retrieve RAG context automatically: {maya!r}')
+        require(maya.get('context_loaded') is False, f'Unexpected conversation context in smoke call: {maya!r}')
+        require(maya.get('memory_written') is False, f'Unexpected memory write without conversation_id: {maya!r}')
     else:
         print('WARN: INTERNAL_AGENT_TOKEN unavailable; agent-runtime smoke skipped.')
 
-    print('PASS: core runtime, RAG, policy gateway and Maya multi-agent chain are operational.')
+    print('PASS: core runtime, automatic RAG, policy gateway and Maya multi-agent chain are operational.')
 
 
 if __name__ == '__main__':
