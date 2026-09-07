@@ -32,6 +32,15 @@ def post(path, payload, headers=None, timeout=180):
         raise RuntimeError(f'{path} unreachable: {exc}') from exc
 
 
+def require_rejected(path, payload, headers, timeout=60):
+    try:
+        status, data = post(path, payload, headers, timeout=timeout)
+    except RuntimeError as exc:
+        require('HTTP ' in str(exc), f'Unexpected rejection error for {path}: {exc}')
+        return
+    raise RuntimeError(f'Invalid internal token was accepted by {path}: status={status}, data={data!r}')
+
+
 def wait_for_production_webhook(path, payload, timeout=120):
     deadline = time.time() + timeout
     last_error = None
@@ -129,6 +138,27 @@ def main():
 
     if TOKEN:
         auth = {'x-assis-internal-token': TOKEN}
+        bad_auth = {'x-assis-internal-token': f'invalid-{marker}'}
+
+        print('Internal auth valid-token path...')
+        status, auth_check = post('/webhook/assis/internal/auth/verify', {'token': TOKEN})
+        require(status == 200 and isinstance(auth_check, dict) and auth_check.get('valid') is True, f'Valid internal token was not accepted: {auth_check!r}')
+        status, bad_check = post('/webhook/assis/internal/auth/verify', {'token': f'invalid-{marker}'})
+        require(status == 200 and isinstance(bad_check, dict) and bad_check.get('valid') is False, f'Invalid internal token verifier response: {bad_check!r}')
+
+        print('Internal auth rejects invalid Policy Gateway token...')
+        require_rejected('/webhook/assis/internal/tool/execute', {
+            'agent_id': 'reception.agent',
+            'tool_call': None,
+            'trace_id': f'{marker}-bad-policy',
+        }, bad_auth)
+
+        print('Internal auth rejects invalid Maya token...')
+        require_rejected('/webhook/assis/v1/maya/orchestrate', {
+            'text': 'Teste de autenticação. Não processe esta solicitação.',
+            'trace_id': f'{marker}-bad-maya',
+        }, bad_auth)
+
         print('Policy gateway no-tool path...')
         status, policy = post('/webhook/assis/internal/tool/execute', {
             'agent_id': 'reception.agent',
@@ -194,7 +224,7 @@ def main():
     else:
         print('WARN: INTERNAL_AGENT_TOKEN unavailable; agent-runtime smoke skipped.')
 
-    print('PASS: core runtime, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
+    print('PASS: core runtime, hashed internal auth, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
 
 
 if __name__ == '__main__':
