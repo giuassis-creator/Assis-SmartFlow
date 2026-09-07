@@ -1,5 +1,9 @@
 {$ASSIS_DOMAIN} {
   encode zstd gzip
+
+  @internal_webhooks path /webhook/internal/* /webhook/assis/internal/*
+  respond @internal_webhooks 404
+
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options "nosniff"
@@ -7,5 +11,6 @@
     Referrer-Policy "strict-origin-when-cross-origin"
     -Server
   }
+
   reverse_proxy n8n:5678
 }
