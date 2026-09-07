@@ -79,6 +79,8 @@ if (-not $SkipSmoke) {
   Write-Host 'Atualizando imagem QA para refletir dependências e testes atuais...'
   & docker compose @compose build qa | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir a imagem QA.' }
+  & "$PSScriptRoot\warm-local-ai.ps1"
+  if ($LASTEXITCODE -ne 0) { throw 'Falha ao aquecer a IA local antes da homologação.' }
   Write-Host 'Aguardando o n8n concluir o carregamento das rotas de produção (até 120s)...'
   & docker compose @compose run --rm qa python scripts/smoke_core_runtime.py
   if ($LASTEXITCODE -ne 0) {
