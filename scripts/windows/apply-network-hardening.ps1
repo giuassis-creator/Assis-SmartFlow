@@ -3,9 +3,11 @@ $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
 
-Write-Host 'Aplicando hardening de rede sem remover volumes...'
+Write-Host 'Aplicando hardening de rede sem remover volumes e sem reiniciar dependências persistentes...'
+# IMPORTANT: do not let Compose recreate/restart postgres/redis as dependencies here.
+# The hardening changes only host port bindings for these application services and Caddy.
 $services = @('n8n','ollama','qdrant','stt','tts','caddy')
-& docker compose @compose up -d --force-recreate @services | Out-Host
+& docker compose @compose up -d --force-recreate --no-deps @services | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao recriar containers para aplicar o hardening de rede.' }
 
 $internalServices = @('n8n','ollama','qdrant','stt','tts')
