@@ -211,7 +211,6 @@ if (-not $SkipPublish) {
   Write-Host 'Reiniciando somente o n8n para aplicar publicação e webhooks...'
   & docker compose @compose restart n8n
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao reiniciar o n8n.' }
-  Start-Sleep -Seconds 8
   $n8nContainer = Get-ComposeContainer 'n8n'
 }
 
@@ -240,10 +239,29 @@ SELECT count(*)
 FROM webhook_entity
 WHERE "workflowId" IN ($idsSql);
 "@
-$webhookCount = [int](Invoke-PostgresScalar $webhookCountSql)
-Write-Host "Webhooks registrados para o núcleo: $webhookCount"
+
+# Após restart o processo do n8n pode levar alguns segundos para reconstruir o índice de
+# workflows ativos e persistir novamente webhook_entity. Não tratar a janela transitória
+# como falha de publicação.
+$webhookCount = 0
+$deadline = (Get-Date).AddSeconds(120)
+$attempt = 0
+Write-Host 'Aguardando registro dos webhooks de produção do núcleo (até 120s)...'
+do {
+  $attempt++
+  try {
+    $webhookCount = [int](Invoke-PostgresScalar $webhookCountSql)
+  } catch {
+    $webhookCount = 0
+  }
+  if ($webhookCount -gt 0) { break }
+  Start-Sleep -Seconds 3
+} while ((Get-Date) -lt $deadline)
+
+Write-Host "Webhooks registrados para o núcleo: $webhookCount (tentativa $attempt)"
 if ($webhookCount -eq 0) {
-  throw 'Nenhum webhook do núcleo foi registrado após a publicação/restart. Homologação interrompida.'
+  $n8nLogs = & docker logs --tail 120 $n8nContainer 2>&1
+  throw "Nenhum webhook do núcleo foi registrado em até 120s após a publicação/restart. Últimos logs do n8n:`n$($n8nLogs -join "`n")"
 }
 
 Write-Host 'PASS: núcleo Assis SmartFlow configurado, publicado e com webhooks registrados.'
