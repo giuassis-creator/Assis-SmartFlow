@@ -1,19 +1,6 @@
-services:
-  n8n:
-    ports:
-      - "5678:5678"
-  ollama:
-    ports:
-      - "11434:11434"
-  qdrant:
-    ports:
-      - "6333:6333"
-  stt:
-    ports:
-      - "8000:8000"
-  tts:
-    ports:
-      - "7860:7860"
+services: {}
 
-# Development override for Docker Desktop on Windows.
-# Public ports are intentionally enabled only here for local diagnostics.
+# Docker Desktop production-like override.
+# Internal services are intentionally NOT published on the Windows host.
+# Access the n8n editor through Caddy at https://assis.localhost.
+# For temporary loopback-only diagnostics, add core/docker-compose.diagnostics.yml.
