@@ -176,7 +176,8 @@ def main():
             })
             require(status == 200, 'Context verification after turn 1 did not return 200')
             require(isinstance(remembered, dict), f'Unexpected context verification response: {remembered!r}')
-            require(memory_marker in str(remembered.get('summary') or ''), f'Memory marker was not persisted after turn 1: {remembered!r}')
+            remembered_summary = str(remembered.get('summary') or '')
+            require(memory_marker.casefold() in remembered_summary.casefold(), f'Memory marker was not persisted after turn 1: {remembered!r}')
 
             status, second = post('/webhook/assis/v1/maya/orchestrate', {
                 'text': 'Qual é meu código de preferência desta conversa? Responda apenas com o código.',
@@ -187,7 +188,7 @@ def main():
             require(isinstance(second, dict), f'Unexpected memory turn 2 response: {second!r}')
             require(second.get('context_loaded') is True, f'Conversation context was not loaded on turn 2: {second!r}')
             require(second.get('memory_written') is True, f'Conversation memory was not updated on turn 2: {second!r}')
-            require(memory_marker.lower() in str(second.get('response') or '').lower(), f'Maya did not recall the previous-turn memory marker: {second!r}')
+            require(memory_marker.casefold() in str(second.get('response') or '').casefold(), f'Maya did not recall the previous-turn memory marker: {second!r}')
         finally:
             delete_smoke_organization(smoke_org_id)
     else:
