@@ -17,15 +17,52 @@
     },
     {
       "parameters": {
-        "jsCode": "const b=$json.body??$json;const h=$json.headers??{};if($env.EVOLUTION_WEBHOOK_SECRET && h['x-assis-secret']!==$env.EVOLUTION_WEBHOOK_SECRET) throw new Error('unauthorized');const d=b.data??b;return [{json:{organization_slug:b.organization_slug??'default',channel:'whatsapp',contact:{external_id:d.key?.remoteJid??d.from??'',phone:d.key?.remoteJid??d.from??''},conversation_id:d.key?.remoteJid??d.from??'',message_id:d.key?.id??d.id??null,message_type:d.message?.audioMessage?'audio':'text',text:d.message?.conversation??d.message?.extendedTextMessage?.text??d.text??'',raw:b}}];"
+        "jsCode": "const b=$json.body??$json;const h=$json.headers??{};const configured=String($env.EVOLUTION_WEBHOOK_SECRET??'').trim();if(!configured||configured==='CHANGE_ME_LONG_RANDOM_EVOLUTION_SECRET'||configured.length<32)throw new Error('evolution webhook secret not configured');const supplied=String(h['x-assis-secret']??h['X-Assis-Secret']??'');if(!supplied||supplied!==configured)throw new Error('unauthorized evolution webhook');const d=b.data??b;const remote=d.key?.remoteJid??d.from??'';const messageId=d.key?.id??d.id??null;if(!remote||!messageId)throw new Error('evolution remote contact and message id required');return [{json:{organization_slug:b.organization_slug??'default',channel:'whatsapp',contact:{external_id:remote,name:d.pushName??d.name??null,phone:remote},conversation_id:remote,message_id:messageId,external_message_id:messageId,message_type:d.message?.audioMessage?'audio':'text',text:d.message?.conversation??d.message?.extendedTextMessage?.text??d.text??'',timestamp:d.messageTimestamp??b.timestamp??null,raw:b}}];"
       },
       "id": "verify-and-normalize",
       "name": "Verify and Normalize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [260,0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/assis/v1/message",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-assis-internal-token",
+              "value": "={{ $env.INTERNAL_AGENT_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "forward-canonical",
+      "name": "Forward Canonical Ingress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520,0]
     }
   ],
-  "connections": {"Evolution Webhook":{"main":[[{"node":"Verify and Normalize","type":"main","index":0}]]}},
-  "pinData": {},"settings":{"executionOrder":"v1"},"active":false,"tags":[]
+  "connections": {
+    "Evolution Webhook": {
+      "main": [[{"node":"Verify and Normalize","type":"main","index":0}]]
+    },
+    "Verify and Normalize": {
+      "main": [[{"node":"Forward Canonical Ingress","type":"main","index":0}]]
+    }
+  },
+  "pinData": {},
+  "settings":{"executionOrder":"v1"},
+  "active":false,
+  "tags":[]
 }
