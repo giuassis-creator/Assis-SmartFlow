@@ -80,6 +80,15 @@ def gateway(tool, arguments, organization_id, idempotency_key=None, confirmed=Fa
     return post("/webhook/assis/internal/tool/execute", payload, expect_success=expect_success)
 
 
+def assert_policy_block(response, reason, tool):
+    if not isinstance(response, dict):
+        fail(f"Policy Gateway returned a non-JSON block response: {response}")
+    if response.get("executed") is not False or response.get("blocked") is not True:
+        fail(f"Policy Gateway did not block {tool} as expected: {response}")
+    if response.get("reason") != reason or response.get("tool") != tool:
+        fail(f"Unexpected Policy Gateway block for {tool}: {response}")
+
+
 def pg_connect():
     return psycopg.connect(
         host=os.environ.get("POSTGRES_HOST", "postgres"),
@@ -152,7 +161,7 @@ def main():
         )
 
         print("Calendar write rejects missing confirmation...")
-        gateway(
+        _, _, confirmation_block = gateway(
             "calendar.book",
             {
                 "calendar_id": CALENDAR_ID,
@@ -163,8 +172,8 @@ def main():
             organization_id,
             idempotency_key=f"qa-negative-{uuid.uuid4()}",
             confirmed=False,
-            expect_success=False,
         )
+        assert_policy_block(confirmation_block, "explicit_confirmation_required", "calendar.book")
 
         book_key = f"qa-book-{uuid.uuid4()}"
         print("Calendar create through Policy Gateway...")
