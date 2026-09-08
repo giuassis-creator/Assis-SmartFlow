@@ -1,0 +1,15 @@
+services:
+  n8n:
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_EDITOR_BASE_URL: http://localhost:5678
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"
+    ports:
+      - "127.0.0.1:5678:5678"
+
+# Local-only OAuth bootstrap override.
+# Use only while connecting OAuth credentials that reject *.localhost redirect hosts.
+# Binds n8n exclusively to Windows loopback and leaves production-like Caddy settings untouched.
