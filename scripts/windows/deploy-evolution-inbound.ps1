@@ -58,7 +58,13 @@ $n8n = Get-ComposeContainer 'n8n'
 if (-not $postgres -or -not $n8n) { throw 'PostgreSQL ou n8n indisponível.' }
 
 $escapedName = $workflowName.Replace("'","''")
-$sql = "SELECT id FROM workflow_entity WHERE name='$escapedName' ORDER BY \"updatedAt\" DESC LIMIT 1;"
+$sql = @"
+SELECT id
+FROM workflow_entity
+WHERE name='$escapedName'
+ORDER BY "updatedAt" DESC
+LIMIT 1;
+"@
 $workflowId = (& docker exec --env "ASSIS_SQL=$sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
 $workflowId = $workflowId.Trim()
 if ([string]::IsNullOrWhiteSpace($workflowId)) { throw 'Workflow Evolution importado não foi localizado no banco do n8n.' }
@@ -94,7 +100,11 @@ $marker = [guid]::NewGuid().ToString('N')
 $slug = "evolution-smoke-$marker"
 $remote = "55119999$($marker.Substring(0,4))@s.whatsapp.net"
 $msgId = "QA-$marker"
-$insertOrg = "INSERT INTO organizations(slug,name,config) VALUES('$slug','Evolution Smoke','{\"smoke_test\":true}'::jsonb) RETURNING id;"
+$insertOrg = @"
+INSERT INTO organizations(slug,name,config)
+VALUES('$slug','Evolution Smoke','{"smoke_test":true}'::jsonb)
+RETURNING id;
+"@
 $orgId = (& docker exec --env "ASSIS_SQL=$insertOrg" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
 $orgId = $orgId.Trim()
 if ([string]::IsNullOrWhiteSpace($orgId)) { throw 'Não foi possível criar organização temporária para smoke Evolution.' }
@@ -112,7 +122,14 @@ try {
   if ($goodStatus -ne '200') { throw "Adapter Evolution válido retornou HTTP $goodStatus." }
 
   Start-Sleep -Seconds 2
-  $verifySql = "SELECT count(*) FROM messages m JOIN organizations o ON o.id=m.organization_id WHERE o.slug='$slug' AND m.provider_message_id='$msgId' AND m.body='Mensagem de homologação Evolution';"
+  $verifySql = @"
+SELECT count(*)
+FROM messages m
+JOIN organizations o ON o.id=m.organization_id
+WHERE o.slug='$slug'
+  AND m.provider_message_id='$msgId'
+  AND m.body='Mensagem de homologação Evolution';
+"@
   $count = (& docker exec --env "ASSIS_SQL=$verifySql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
   if ([int]$count.Trim() -ne 1) { throw 'Mensagem Evolution não chegou ao Canonical Ingress/PostgreSQL.' }
   Write-Host 'PASS: Evolution autenticado atravessou o adapter e foi persistido pelo Canonical Ingress.'
