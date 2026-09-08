@@ -103,6 +103,13 @@ def delete_smoke_organization(organization_id):
         conn.commit()
 
 
+def cleanup_dlq(event_key):
+    with pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM dead_letter_events WHERE event_key=%s', (event_key,))
+        conn.commit()
+
+
 def main():
     print('Waiting for n8n production webhook registration...')
     status, noop = wait_for_production_webhook(
@@ -128,6 +135,28 @@ def main():
     require_rejected('/webhook/internal/memory/write', {'conversation_id': '00000000-0000-4000-8000-000000000000', 'summary': 'blocked'}, bad_auth)
     require_rejected('/webhook/internal/rag/search', {'organization_id': 'blocked', 'query': 'blocked'}, bad_auth)
     require_rejected('/webhook/internal/rag/ingest', {'organization_id': 'blocked', 'title': 'blocked', 'content': 'blocked'}, bad_auth)
+    require_rejected('/webhook/internal/dlq', {'source': 'blocked', 'event_key': f'{marker}-blocked', 'error': 'blocked'}, bad_auth)
+
+    print('Authenticated DLQ capture...')
+    dlq_key = f'{marker}-dlq'
+    try:
+        status, dlq = post('/webhook/internal/dlq', {
+            'source': 'core.runtime.smoke',
+            'event_key': dlq_key,
+            'payload': {'smoke_test': True, 'marker': marker},
+            'error': 'temporary smoke failure',
+        }, auth)
+        require(status == 200 and isinstance(dlq, dict) and dlq.get('id'), f'DLQ capture failed: {dlq!r}')
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT source,error,status FROM dead_letter_events WHERE event_key=%s', (dlq_key,))
+                row = cur.fetchone()
+                require(row is not None, 'DLQ smoke event was not persisted')
+                require(row[0] == 'core.runtime.smoke', f'Unexpected DLQ source: {row!r}')
+                require(row[1] == 'temporary smoke failure', f'Unexpected DLQ error: {row!r}')
+                require(row[2] == 'pending', f'Unexpected DLQ status: {row!r}')
+    finally:
+        cleanup_dlq(dlq_key)
 
     print('RAG ingest...')
     org = 'assis-smoke'
@@ -228,7 +257,7 @@ def main():
     finally:
         delete_smoke_organization(smoke_org_id)
 
-    print('PASS: hardened internal endpoint auth, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
+    print('PASS: hardened internal endpoint auth, authenticated DLQ, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
 
 
 if __name__ == '__main__':
