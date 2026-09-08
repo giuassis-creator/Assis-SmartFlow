@@ -18,6 +18,15 @@ Write-Host 'Sincronizando workflows endurecidos no n8n...'
 & "$PSScriptRoot\import-workflows.ps1" -Force
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflows.' }
 
+# import-workflows.ps1 intentionally imports workflows inactive. Because the Calendar
+# deployment force-imports the whole workflow catalog, Internal Auth Verify must be
+# republished before any Calendar/Policy Gateway runtime call can authenticate.
+Write-Host 'Restaurando autenticação interna após a importação forçada...'
+& "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao religar credenciais PostgreSQL do núcleo.' }
+& "$PSScriptRoot\publish-internal-auth.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao republicar Internal Auth Verify.' }
+
 Write-Host 'Aplicando migration, credenciais, publicação e Policy Gateway...'
 & "$PSScriptRoot\configure-google-calendar.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao configurar Google Calendar.' }
@@ -54,6 +63,10 @@ do {
 } while ((Get-Date) -lt $deadline)
 if ($publishedCount -lt 4) { throw "Somente $publishedCount/4 workflows Calendar possuem activeVersionId após a publicação." }
 Write-Host 'PASS: 4/4 workflows Calendar publicados (activeVersionId presente).'
+
+$authPublished = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE name='Internal Auth Verify' AND \"activeVersionId\" IS NOT NULL;")
+if ($authPublished -ne 1) { throw 'Internal Auth Verify perdeu activeVersionId durante o deploy Calendar.' }
+Write-Host 'PASS: Internal Auth Verify permanece publicado após o deploy Calendar.'
 
 Write-Host 'Validando bloqueio público dos webhooks internos no Caddy...'
 $publicStatus = (& curl.exe -k -s -o NUL -w "%{http_code}" -X POST "https://assis.localhost/webhook/assis/internal/calendar/availability" -H "Content-Type: application/json" -d '{}').Trim()
