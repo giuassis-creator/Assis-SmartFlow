@@ -86,7 +86,7 @@ Write-Host "PASS: credencial Google Calendar vinculada: $credentialName ($creden
 $ids = @()
 foreach ($name in $workflowNames) {
   $escapedName = $name.Replace("'","''")
-  $id = Invoke-PgScalar "SELECT id FROM workflow_entity WHERE name='$escapedName' ORDER BY \"updatedAt\" DESC LIMIT 1;"
+  $id = Invoke-PgScalar "SELECT id FROM workflow_entity WHERE name='$escapedName' ORDER BY ""updatedAt"" DESC LIMIT 1;"
   if (-not $id) { throw "Workflow não encontrado: $name. Rode import-workflows.ps1 -Force primeiro." }
   $ids += $id
   if (-not $SkipPublish) {
