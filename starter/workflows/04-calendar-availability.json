@@ -1,3 +1,28 @@
 {
-  "name":"Starter 04 Calendar Availability","nodes":[{"parameters":{"httpMethod":"POST","path":"mcp/calendar/availability","responseMode":"lastNode","options":{}},"id":"calendar-availability","name":"Calendar Availability","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],"webhookId":"calendar-availability"},{"parameters":{"jsCode":"const b=$json.body??$json;if(!b.organization_id)throw new Error('organization_id required');return [{json:b}];"},"id":"validate-mcp-input","name":"Validate MCP Input","type":"n8n-nodes-base.code","typeVersion":2,"position":[260,0]}],"connections":{"Calendar Availability":{"main":[[{"node":"Validate MCP Input","type":"main","index":0}]]}},"pinData":{},"settings":{"executionOrder":"v1"},"active":false,"tags":[]
+  "name": "Starter 04 Calendar Availability",
+  "nodes": [
+    {
+      "parameters": {"httpMethod":"POST","path":"mcp/calendar/availability","responseMode":"lastNode","options":{}},
+      "id":"calendar-availability","name":"Calendar Availability","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],"webhookId":"calendar-availability"
+    },
+    {
+      "parameters": {"jsCode":"const b=$json.body??$json;if(!b.organization_id)throw new Error('organization_id required');if(!b.time_min)throw new Error('time_min required');if(!b.time_max)throw new Error('time_max required');const a=Date.parse(b.time_min),z=Date.parse(b.time_max);if(!Number.isFinite(a)||!Number.isFinite(z)||z<=a)throw new Error('valid time_min/time_max required');return [{json:{...b,calendar_id:String(b.calendar_id||'primary')}}];"},
+      "id":"validate-mcp-input","name":"Validate MCP Input","type":"n8n-nodes-base.code","typeVersion":2,"position":[260,0]
+    },
+    {
+      "parameters": {"resource":"calendar","calendar":"={{ $json.calendar_id }}","timeMin":"={{ $json.time_min }}","timeMax":"={{ $json.time_max }}","options":{"outputFormat":"availability"}},
+      "id":"google-availability","name":"Google Calendar Availability","type":"n8n-nodes-base.googleCalendar","typeVersion":1,"position":[520,0],
+      "credentials":{"googleCalendarOAuth2Api":{"id":"ASSIS_GOOGLE_CALENDAR","name":"Assis Google Calendar"}}
+    },
+    {
+      "parameters": {"jsCode":"return $input.all().map(i=>({json:{provider:'google_calendar',provider_status:'ok',...i.json}}));"},
+      "id":"normalize","name":"Normalize Availability","type":"n8n-nodes-base.code","typeVersion":2,"position":[780,0]
+    }
+  ],
+  "connections": {
+    "Calendar Availability":{"main":[[{"node":"Validate MCP Input","type":"main","index":0}]]},
+    "Validate MCP Input":{"main":[[{"node":"Google Calendar Availability","type":"main","index":0}]]},
+    "Google Calendar Availability":{"main":[[{"node":"Normalize Availability","type":"main","index":0}]]}
+  },
+  "pinData":{},"settings":{"executionOrder":"v1"},"active":false,"tags":[]
 }
