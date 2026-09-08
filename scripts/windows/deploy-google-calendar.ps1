@@ -72,6 +72,30 @@ $authPublished = [int](Invoke-PgScalar $authPublishedSql)
 if ($authPublished -ne 1) { throw 'Internal Auth Verify perdeu activeVersionId durante o deploy Calendar.' }
 Write-Host 'PASS: Internal Auth Verify permanece publicado após o deploy Calendar.'
 
+# Container state "Started" only means the process was launched; n8n can still be booting
+# and rebuilding production webhook routes. Prove that port 5678 accepts TCP connections from
+# the same backend network used by the QA container before starting runtime homologation.
+Write-Host 'Aguardando n8n aceitar conexões internas após o recreate (até 120s)...'
+$ready = $false
+$readyDeadline = (Get-Date).AddSeconds(120)
+do {
+  & docker compose @compose --profile tools run --rm --no-deps qa python -c "import socket; s=socket.create_connection(('n8n',5678),3); s.close()" *> $null
+  if ($LASTEXITCODE -eq 0) {
+    $ready = $true
+    break
+  }
+  Start-Sleep -Seconds 3
+} while ((Get-Date) -lt $readyDeadline)
+if (-not $ready) {
+  & docker compose @compose logs --tail 120 n8n | Out-Host
+  throw 'n8n não aceitou conexões internas na porta 5678 dentro de 120s.'
+}
+Write-Host 'PASS: n8n aceita conexões internas na rede backend.'
+
+# Give n8n a short stabilization window after opening the socket so production webhook
+# registration can finish before the first authenticated runtime request.
+Start-Sleep -Seconds 3
+
 Write-Host 'Validando bloqueio público dos webhooks internos no Caddy...'
 $publicStatus = (& curl.exe -k -s -o NUL -w "%{http_code}" -X POST "https://assis.localhost/webhook/assis/internal/calendar/availability" -H "Content-Type: application/json" -d '{}').Trim()
 if ($publicStatus -ne '404') { throw "Webhook interno Calendar ficou acessível pelo proxy público; HTTP $publicStatus em vez de 404." }
@@ -86,7 +110,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha na validação estática dos adapters Ca
 if (-not $SkipRuntimeSmoke) {
   Write-Host "Executando homologação real contra Google Calendar '$CalendarId'."
   Write-Host 'O smoke cria um evento temporário identificado como [Assis SmartFlow QA], reagenda e cancela o mesmo evento.'
-  & docker compose @compose --profile tools run --rm -e "CALENDAR_ID=$CalendarId" qa python scripts/smoke_calendar_runtime.py | Out-Host
+  & docker compose @compose --profile tools run --rm qa python scripts/smoke_calendar_runtime.py | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha na homologação runtime do Google Calendar.' }
 }
 
