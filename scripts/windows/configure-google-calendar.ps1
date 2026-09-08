@@ -69,7 +69,7 @@ $escapedId = $credentialId.Replace("'","''")
 $escapedCredentialName = $credentialName.Replace("'","''")
 $escapedPostgresId = $postgresCredentialId.Replace("'","''")
 
-$bindGoogle = @"
+$bindGoogleEntity = @"
 WITH target AS (
  SELECT id,name FROM credentials_entity WHERE id='$escapedId'
 ), patched AS (
@@ -90,9 +90,36 @@ SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
 FROM patched
 WHERE we.id=patched.id AND we.nodes::jsonb IS DISTINCT FROM patched.nodes;
 "@
-Invoke-Pg $bindGoogle
+Invoke-Pg $bindGoogleEntity
 
-$bindPostgres = @"
+# n8n 2.x publishes the workflow_history snapshot referenced by workflow_entity.versionId.
+# Patching only workflow_entity leaves placeholders in the published snapshot, so mirror
+# credential binding into the current history row before publish:workflow.
+$bindGoogleHistory = @"
+WITH target AS (
+ SELECT id,name FROM credentials_entity WHERE id='$escapedId'
+), patched AS (
+ SELECT wh."versionId" AS version_id,
+        jsonb_agg(
+          CASE WHEN (n.node->'credentials'->'googleCalendarOAuth2Api'->>'id'='ASSIS_GOOGLE_CALENDAR'
+                  OR n.node->'credentials'->'googleCalendarOAuth2Api'->>'name'='$preferredCredentialName'
+                  OR n.node->'credentials'->'googleCalendarOAuth2Api'->>'name'='$escapedCredentialName')
+               THEN jsonb_set(jsonb_set(n.node,'{credentials,googleCalendarOAuth2Api,id}',to_jsonb(target.id::text),true),'{credentials,googleCalendarOAuth2Api,name}',to_jsonb(target.name::text),true)
+               ELSE n.node END ORDER BY n.ord) AS nodes
+ FROM workflow_history wh
+ JOIN workflow_entity we ON we.id=wh."workflowId" AND we."versionId"=wh."versionId"
+ CROSS JOIN target
+ CROSS JOIN LATERAL jsonb_array_elements(wh.nodes::jsonb) WITH ORDINALITY AS n(node,ord)
+ GROUP BY wh."versionId"
+)
+UPDATE workflow_history wh
+SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
+FROM patched
+WHERE wh."versionId"=patched.version_id AND wh.nodes::jsonb IS DISTINCT FROM patched.nodes;
+"@
+Invoke-Pg $bindGoogleHistory
+
+$bindPostgresEntity = @"
 WITH target AS (
  SELECT id,name FROM credentials_entity WHERE id='$escapedPostgresId'
 ), patched AS (
@@ -112,14 +139,41 @@ SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
 FROM patched
 WHERE we.id=patched.id AND we.nodes::jsonb IS DISTINCT FROM patched.nodes;
 "@
-Invoke-Pg $bindPostgres
+Invoke-Pg $bindPostgresEntity
 
-$unresolvedGoogle = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_GOOGLE_CALENDAR%';")
-if ($unresolvedGoogle -ne 0) { throw "Ainda existem $unresolvedGoogle workflow(s) com ASSIS_GOOGLE_CALENDAR não resolvido." }
-$unresolvedPostgres = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_POSTGRES%';")
-if ($unresolvedPostgres -ne 0) { throw "Ainda existem $unresolvedPostgres workflow(s) com ASSIS_POSTGRES não resolvido." }
-Write-Host "PASS: credencial Google Calendar vinculada: $credentialName ($credentialId)"
-Write-Host "PASS: credencial PostgreSQL vinculada aos gates de idempotência: $postgresCredentialName ($postgresCredentialId)"
+$bindPostgresHistory = @"
+WITH target AS (
+ SELECT id,name FROM credentials_entity WHERE id='$escapedPostgresId'
+), patched AS (
+ SELECT wh."versionId" AS version_id,
+        jsonb_agg(
+          CASE WHEN n.node->'credentials'->'postgres'->>'id'='ASSIS_POSTGRES'
+                    OR n.node->'credentials'->'postgres'->>'name'='$postgresCredentialName'
+               THEN jsonb_set(jsonb_set(n.node,'{credentials,postgres,id}',to_jsonb(target.id::text),true),'{credentials,postgres,name}',to_jsonb(target.name::text),true)
+               ELSE n.node END ORDER BY n.ord) AS nodes
+ FROM workflow_history wh
+ JOIN workflow_entity we ON we.id=wh."workflowId" AND we."versionId"=wh."versionId"
+ CROSS JOIN target
+ CROSS JOIN LATERAL jsonb_array_elements(wh.nodes::jsonb) WITH ORDINALITY AS n(node,ord)
+ GROUP BY wh."versionId"
+)
+UPDATE workflow_history wh
+SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
+FROM patched
+WHERE wh."versionId"=patched.version_id AND wh.nodes::jsonb IS DISTINCT FROM patched.nodes;
+"@
+Invoke-Pg $bindPostgresHistory
+
+$unresolvedGoogleEntity = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_GOOGLE_CALENDAR%';")
+if ($unresolvedGoogleEntity -ne 0) { throw "Ainda existem $unresolvedGoogleEntity workflow(s) em workflow_entity com ASSIS_GOOGLE_CALENDAR não resolvido." }
+$unresolvedGoogleHistory = [int](Invoke-PgScalar 'SELECT count(*) FROM workflow_history wh JOIN workflow_entity we ON we.id=wh."workflowId" AND we."versionId"=wh."versionId" WHERE wh.nodes::text LIKE ''%ASSIS_GOOGLE_CALENDAR%'';')
+if ($unresolvedGoogleHistory -ne 0) { throw "Ainda existem $unresolvedGoogleHistory snapshot(s) atuais em workflow_history com ASSIS_GOOGLE_CALENDAR não resolvido." }
+$unresolvedPostgresEntity = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_POSTGRES%';")
+if ($unresolvedPostgresEntity -ne 0) { throw "Ainda existem $unresolvedPostgresEntity workflow(s) em workflow_entity com ASSIS_POSTGRES não resolvido." }
+$unresolvedPostgresHistory = [int](Invoke-PgScalar 'SELECT count(*) FROM workflow_history wh JOIN workflow_entity we ON we.id=wh."workflowId" AND we."versionId"=wh."versionId" WHERE wh.nodes::text LIKE ''%ASSIS_POSTGRES%'';')
+if ($unresolvedPostgresHistory -ne 0) { throw "Ainda existem $unresolvedPostgresHistory snapshot(s) atuais em workflow_history com ASSIS_POSTGRES não resolvido." }
+Write-Host "PASS: credencial Google Calendar vinculada no workflow atual e no snapshot publicável: $credentialName ($credentialId)"
+Write-Host "PASS: credencial PostgreSQL vinculada no workflow atual e no snapshot publicável: $postgresCredentialName ($postgresCredentialId)"
 
 $ids = @()
 foreach ($name in $workflowNames) {
