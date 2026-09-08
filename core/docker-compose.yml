@@ -74,6 +74,7 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_ALLOW_PAID_FALLBACK: ${AI_ALLOW_PAID_FALLBACK:-false}
       INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}
+      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-}
     volumes:
       - n8n_data:/home/node/.n8n
       - ../library:/opt/assis/library:ro
