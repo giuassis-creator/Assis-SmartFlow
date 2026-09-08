@@ -112,9 +112,25 @@ def main():
     require(status == 200, 'Tool noop did not return 200')
     require(isinstance(noop, dict) and noop.get('executed') is False, f'Unexpected noop response: {noop!r}')
 
+    require(TOKEN, 'INTERNAL_AGENT_TOKEN unavailable for hardened core smoke')
+    auth = {'x-assis-internal-token': TOKEN}
+    marker = f'ASSIS_SMOKE_{int(time.time())}'
+    bad_auth = {'x-assis-internal-token': f'invalid-{marker}'}
+
+    print('Internal auth valid-token path...')
+    status, auth_check = post('/webhook/assis/internal/auth/verify', {'token': TOKEN})
+    require(status == 200 and isinstance(auth_check, dict) and auth_check.get('valid') is True, f'Valid internal token was not accepted: {auth_check!r}')
+    status, bad_check = post('/webhook/assis/internal/auth/verify', {'token': f'invalid-{marker}'})
+    require(status == 200 and isinstance(bad_check, dict) and bad_check.get('valid') is False, f'Invalid internal token verifier response: {bad_check!r}')
+
+    print('Direct internal endpoints reject invalid token...')
+    require_rejected('/webhook/internal/context', {'conversation_id': '00000000-0000-4000-8000-000000000000'}, bad_auth)
+    require_rejected('/webhook/internal/memory/write', {'conversation_id': '00000000-0000-4000-8000-000000000000', 'summary': 'blocked'}, bad_auth)
+    require_rejected('/webhook/internal/rag/search', {'organization_id': 'blocked', 'query': 'blocked'}, bad_auth)
+    require_rejected('/webhook/internal/rag/ingest', {'organization_id': 'blocked', 'title': 'blocked', 'content': 'blocked'}, bad_auth)
+
     print('RAG ingest...')
     org = 'assis-smoke'
-    marker = f'ASSIS_SMOKE_{int(time.time())}'
     status, ingest = post('/webhook/internal/rag/ingest', {
         'organization_id': org,
         'document_id': marker,
@@ -122,7 +138,7 @@ def main():
         'content': f'{marker} A secretária padrão se chama Maya e o núcleo utiliza RAG local.',
         'checksum': marker,
         'metadata': {'smoke_test': True},
-    })
+    }, auth)
     require(status == 200, 'RAG ingest did not return 200')
 
     print('RAG search...')
@@ -130,101 +146,89 @@ def main():
         'organization_id': org,
         'query': marker,
         'top_k': 3,
-    })
+    }, auth)
     require(status == 200, 'RAG search did not return 200')
     require(isinstance(search, dict), f'Unexpected RAG response: {search!r}')
     require(search.get('paid_api_used') is False, 'RAG unexpectedly reported paid API usage')
     require(search.get('count', 0) >= 1, f'RAG smoke marker not found: {search!r}')
 
-    if TOKEN:
-        auth = {'x-assis-internal-token': TOKEN}
-        bad_auth = {'x-assis-internal-token': f'invalid-{marker}'}
+    print('Internal auth rejects invalid Policy Gateway token...')
+    require_rejected('/webhook/assis/internal/tool/execute', {
+        'agent_id': 'reception.agent',
+        'tool_call': None,
+        'trace_id': f'{marker}-bad-policy',
+    }, bad_auth)
 
-        print('Internal auth valid-token path...')
-        status, auth_check = post('/webhook/assis/internal/auth/verify', {'token': TOKEN})
-        require(status == 200 and isinstance(auth_check, dict) and auth_check.get('valid') is True, f'Valid internal token was not accepted: {auth_check!r}')
-        status, bad_check = post('/webhook/assis/internal/auth/verify', {'token': f'invalid-{marker}'})
-        require(status == 200 and isinstance(bad_check, dict) and bad_check.get('valid') is False, f'Invalid internal token verifier response: {bad_check!r}')
+    print('Internal auth rejects invalid Maya token...')
+    require_rejected('/webhook/assis/v1/maya/orchestrate', {
+        'text': 'Teste de autenticação. Não processe esta solicitação.',
+        'trace_id': f'{marker}-bad-maya',
+    }, bad_auth)
 
-        print('Internal auth rejects invalid Policy Gateway token...')
-        require_rejected('/webhook/assis/internal/tool/execute', {
-            'agent_id': 'reception.agent',
-            'tool_call': None,
-            'trace_id': f'{marker}-bad-policy',
-        }, bad_auth)
+    print('Policy gateway no-tool path...')
+    status, policy = post('/webhook/assis/internal/tool/execute', {
+        'agent_id': 'reception.agent',
+        'tool_call': None,
+        'trace_id': marker,
+    }, auth)
+    require(status == 200, 'Policy gateway did not return 200')
+    require(isinstance(policy, dict) and policy.get('executed') is False, f'Unexpected policy response: {policy!r}')
 
-        print('Internal auth rejects invalid Maya token...')
-        require_rejected('/webhook/assis/v1/maya/orchestrate', {
-            'text': 'Teste de autenticação. Não processe esta solicitação.',
-            'trace_id': f'{marker}-bad-maya',
-        }, bad_auth)
+    print('Maya multi-agent orchestrator + automatic RAG + local Ollama...')
+    status, maya = post('/webhook/assis/v1/maya/orchestrate', {
+        'text': f'O que você sabe sobre {marker}?',
+        'organization_id': org,
+        'trace_id': marker,
+    }, auth, timeout=300)
+    require(status == 200, 'Maya orchestrator did not return 200')
+    require(isinstance(maya, dict), f'Unexpected Maya response: {maya!r}')
+    require(maya.get('orchestrated') is True, f'Maya was not orchestrated: {maya!r}')
+    require(bool(maya.get('response')), f'Maya returned an empty response: {maya!r}')
+    require(maya.get('provider') == 'ollama', f'Maya did not use local Ollama: {maya!r}')
+    require(maya.get('rag_count', 0) >= 1, f'Maya did not retrieve RAG context automatically: {maya!r}')
+    require(maya.get('context_loaded') is False, f'Unexpected conversation context in smoke call: {maya!r}')
+    require(maya.get('memory_written') is False, f'Unexpected memory write without conversation_id: {maya!r}')
 
-        print('Policy gateway no-tool path...')
-        status, policy = post('/webhook/assis/internal/tool/execute', {
-            'agent_id': 'reception.agent',
-            'tool_call': None,
-            'trace_id': marker,
-        }, auth)
-        require(status == 200, 'Policy gateway did not return 200')
-        require(isinstance(policy, dict) and policy.get('executed') is False, f'Unexpected policy response: {policy!r}')
+    print('Conversation memory: two-turn context load + memory write...')
+    smoke_org_id = None
+    try:
+        memory_marker = f'MEMORY_{int(time.time())}'
+        smoke_org_id, conversation_id = create_smoke_conversation(memory_marker)
 
-        print('Maya multi-agent orchestrator + automatic RAG + local Ollama...')
-        status, maya = post('/webhook/assis/v1/maya/orchestrate', {
-            'text': f'O que você sabe sobre {marker}?',
-            'organization_id': org,
-            'trace_id': marker,
+        first_text = f'Guarde nesta conversa que meu código de preferência é {memory_marker}.'
+        status, first = post('/webhook/assis/v1/maya/orchestrate', {
+            'text': first_text,
+            'conversation_id': conversation_id,
+            'trace_id': f'{memory_marker}-turn-1',
         }, auth, timeout=300)
-        require(status == 200, 'Maya orchestrator did not return 200')
-        require(isinstance(maya, dict), f'Unexpected Maya response: {maya!r}')
-        require(maya.get('orchestrated') is True, f'Maya was not orchestrated: {maya!r}')
-        require(bool(maya.get('response')), f'Maya returned an empty response: {maya!r}')
-        require(maya.get('provider') == 'ollama', f'Maya did not use local Ollama: {maya!r}')
-        require(maya.get('rag_count', 0) >= 1, f'Maya did not retrieve RAG context automatically: {maya!r}')
-        require(maya.get('context_loaded') is False, f'Unexpected conversation context in smoke call: {maya!r}')
-        require(maya.get('memory_written') is False, f'Unexpected memory write without conversation_id: {maya!r}')
+        require(status == 200, 'Maya memory turn 1 did not return 200')
+        require(isinstance(first, dict), f'Unexpected memory turn 1 response: {first!r}')
+        require(first.get('context_loaded') is True, f'Conversation context was not loaded on turn 1: {first!r}')
+        require(first.get('memory_written') is True, f'Conversation memory was not written on turn 1: {first!r}')
 
-        print('Conversation memory: two-turn context load + memory write...')
-        smoke_org_id = None
-        try:
-            memory_marker = f'MEMORY_{int(time.time())}'
-            smoke_org_id, conversation_id = create_smoke_conversation(memory_marker)
+        status, remembered = post('/webhook/internal/context', {
+            'conversation_id': conversation_id,
+            'max_messages': 20,
+        }, auth)
+        require(status == 200, 'Context verification after turn 1 did not return 200')
+        require(isinstance(remembered, dict), f'Unexpected context verification response: {remembered!r}')
+        remembered_summary = str(remembered.get('summary') or '')
+        require(memory_marker.casefold() in remembered_summary.casefold(), f'Memory marker was not persisted after turn 1: {remembered!r}')
 
-            first_text = f'Guarde nesta conversa que meu código de preferência é {memory_marker}.'
-            status, first = post('/webhook/assis/v1/maya/orchestrate', {
-                'text': first_text,
-                'conversation_id': conversation_id,
-                'trace_id': f'{memory_marker}-turn-1',
-            }, auth, timeout=300)
-            require(status == 200, 'Maya memory turn 1 did not return 200')
-            require(isinstance(first, dict), f'Unexpected memory turn 1 response: {first!r}')
-            require(first.get('context_loaded') is True, f'Conversation context was not loaded on turn 1: {first!r}')
-            require(first.get('memory_written') is True, f'Conversation memory was not written on turn 1: {first!r}')
+        status, second = post('/webhook/assis/v1/maya/orchestrate', {
+            'text': 'Qual é meu código de preferência desta conversa? Responda apenas com o código.',
+            'conversation_id': conversation_id,
+            'trace_id': f'{memory_marker}-turn-2',
+        }, auth, timeout=300)
+        require(status == 200, 'Maya memory turn 2 did not return 200')
+        require(isinstance(second, dict), f'Unexpected memory turn 2 response: {second!r}')
+        require(second.get('context_loaded') is True, f'Conversation context was not loaded on turn 2: {second!r}')
+        require(second.get('memory_written') is True, f'Conversation memory was not updated on turn 2: {second!r}')
+        require(memory_marker.casefold() in str(second.get('response') or '').casefold(), f'Maya did not recall the previous-turn memory marker: {second!r}')
+    finally:
+        delete_smoke_organization(smoke_org_id)
 
-            status, remembered = post('/webhook/internal/context', {
-                'conversation_id': conversation_id,
-                'max_messages': 20,
-            })
-            require(status == 200, 'Context verification after turn 1 did not return 200')
-            require(isinstance(remembered, dict), f'Unexpected context verification response: {remembered!r}')
-            remembered_summary = str(remembered.get('summary') or '')
-            require(memory_marker.casefold() in remembered_summary.casefold(), f'Memory marker was not persisted after turn 1: {remembered!r}')
-
-            status, second = post('/webhook/assis/v1/maya/orchestrate', {
-                'text': 'Qual é meu código de preferência desta conversa? Responda apenas com o código.',
-                'conversation_id': conversation_id,
-                'trace_id': f'{memory_marker}-turn-2',
-            }, auth, timeout=300)
-            require(status == 200, 'Maya memory turn 2 did not return 200')
-            require(isinstance(second, dict), f'Unexpected memory turn 2 response: {second!r}')
-            require(second.get('context_loaded') is True, f'Conversation context was not loaded on turn 2: {second!r}')
-            require(second.get('memory_written') is True, f'Conversation memory was not updated on turn 2: {second!r}')
-            require(memory_marker.casefold() in str(second.get('response') or '').casefold(), f'Maya did not recall the previous-turn memory marker: {second!r}')
-        finally:
-            delete_smoke_organization(smoke_org_id)
-    else:
-        print('WARN: INTERNAL_AGENT_TOKEN unavailable; agent-runtime smoke skipped.')
-
-    print('PASS: core runtime, hashed internal auth, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
+    print('PASS: hardened internal endpoint auth, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
 
 
 if __name__ == '__main__':
