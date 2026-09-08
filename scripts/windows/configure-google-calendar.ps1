@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
-$credentialName = 'Assis Google Calendar'
+$preferredCredentialName = 'Assis Google Calendar'
 $credentialType = 'googleCalendarOAuth2Api'
 $workflowNames = @(
   'Starter 04 Calendar Availability',
@@ -34,14 +34,27 @@ $postgres = Get-ComposeContainer 'postgres'
 $n8n = Get-ComposeContainer 'n8n'
 if (-not $postgres -or -not $n8n) { throw 'PostgreSQL e n8n precisam estar em execução.' }
 
-$count = [int](Invoke-PgScalar "SELECT count(*) FROM credentials_entity WHERE name='$credentialName' AND type='$credentialType';")
-if ($count -eq 0) {
-  throw "Credencial OAuth '$credentialName' ($credentialType) não encontrada. No n8n, crie uma credencial Google Calendar OAuth2 com exatamente esse nome, conclua o login Google e teste a conexão; depois execute este script novamente."
-}
-if ($count -gt 1) { throw "Há $count credenciais '$credentialName'. Mantenha apenas uma." }
+$preferredCount = [int](Invoke-PgScalar "SELECT count(*) FROM credentials_entity WHERE name='$preferredCredentialName' AND type='$credentialType';")
+if ($preferredCount -gt 1) { throw "Há $preferredCount credenciais '$preferredCredentialName'. Mantenha apenas uma." }
 
-$credentialId = Invoke-PgScalar "SELECT id FROM credentials_entity WHERE name='$credentialName' AND type='$credentialType' LIMIT 1;"
+if ($preferredCount -eq 1) {
+  $credentialId = Invoke-PgScalar "SELECT id FROM credentials_entity WHERE name='$preferredCredentialName' AND type='$credentialType' LIMIT 1;"
+  $credentialName = $preferredCredentialName
+} else {
+  $typeCount = [int](Invoke-PgScalar "SELECT count(*) FROM credentials_entity WHERE type='$credentialType';")
+  if ($typeCount -eq 0) {
+    throw "Nenhuma credencial Google Calendar OAuth2 ($credentialType) encontrada. Crie/conecte a credencial no n8n e execute novamente."
+  }
+  if ($typeCount -gt 1) {
+    throw "Foram encontradas $typeCount credenciais do tipo $credentialType e nenhuma com o nome preferido '$preferredCredentialName'. Renomeie a credencial desejada no n8n para '$preferredCredentialName' e execute novamente."
+  }
+  $credentialId = Invoke-PgScalar "SELECT id FROM credentials_entity WHERE type='$credentialType' LIMIT 1;"
+  $credentialName = Invoke-PgScalar "SELECT name FROM credentials_entity WHERE id='$credentialId' LIMIT 1;"
+  Write-Host "INFO: usando a única credencial Google Calendar disponível: '$credentialName' ($credentialId)."
+}
+
 $escapedId = $credentialId.Replace("'","''")
+$escapedCredentialName = $credentialName.Replace("'","''")
 
 $bind = @"
 WITH target AS (
@@ -50,7 +63,8 @@ WITH target AS (
  SELECT we.id,
         jsonb_agg(
           CASE WHEN (n.node->'credentials'->'googleCalendarOAuth2Api'->>'id'='ASSIS_GOOGLE_CALENDAR'
-                  OR n.node->'credentials'->'googleCalendarOAuth2Api'->>'name'='$credentialName')
+                  OR n.node->'credentials'->'googleCalendarOAuth2Api'->>'name'='$preferredCredentialName'
+                  OR n.node->'credentials'->'googleCalendarOAuth2Api'->>'name'='$escapedCredentialName')
                THEN jsonb_set(jsonb_set(n.node,'{credentials,googleCalendarOAuth2Api,id}',to_jsonb(target.id::text),true),'{credentials,googleCalendarOAuth2Api,name}',to_jsonb(target.name::text),true)
                ELSE n.node END ORDER BY n.ord) AS nodes
  FROM workflow_entity we
