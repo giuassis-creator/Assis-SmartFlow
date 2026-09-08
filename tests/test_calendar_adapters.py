@@ -15,6 +15,12 @@ WRITE_FILES = [
     "08-calendar-reschedule.json",
     "09-calendar-cancel.json",
 ]
+MCP_FILES = [
+    "calendar.availability.json",
+    "calendar.book.json",
+    "calendar.reschedule.json",
+    "calendar.cancel.json",
+]
 
 
 def load(name: str):
@@ -111,3 +117,26 @@ def test_tool_policy_gateway_routes_calendar_only_to_internal_paths():
     assert "webhook/assis/internal/calendar/reschedule" in text
     assert "webhook/assis/internal/calendar/cancel" in text
     assert "webhook/mcp/calendar/" not in text
+
+
+def test_calendar_idempotency_migration_has_compound_primary_key():
+    sql = (ROOT / "core" / "db" / "migrations" / "005_tool_idempotency.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS tool_idempotency" in sql
+    assert "PRIMARY KEY (organization_id, operation, idempotency_key)" in sql
+    assert "status IN ('claimed','completed')" in sql
+
+
+def test_calendar_mcp_catalog_matches_hardened_runtime():
+    catalog_dir = ROOT / "mcp" / "catalog"
+    for name in MCP_FILES:
+        contract = json.loads((catalog_dir / name).read_text(encoding="utf-8"))
+        assert contract["version"] == "1.1.0"
+        assert contract["internal_only"] is True
+
+    for name in ["calendar.book.json", "calendar.reschedule.json", "calendar.cancel.json"]:
+        contract = json.loads((catalog_dir / name).read_text(encoding="utf-8"))
+        assert contract["idempotent"] is True
+        assert contract["idempotency_semantics"] == "persistent-at-most-once"
+        required = set(contract["input"]["required"])
+        assert "confirmed" in required
+        assert "idempotency_key" in required
