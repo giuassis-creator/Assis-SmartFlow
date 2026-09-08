@@ -105,7 +105,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha na validação estática dos adapters Ca
 if (-not $SkipRuntimeSmoke) {
   Write-Host "Executando homologação real contra Google Calendar '$CalendarId'."
   Write-Host 'O smoke cria um evento temporário identificado como [Assis SmartFlow QA], reagenda e cancela o mesmo evento.'
-  & docker compose @compose --profile tools run --rm qa python scripts/smoke_calendar_runtime.py | Out-Host
+  & docker compose @compose --profile tools run --rm -e "CALENDAR_ID=$CalendarId" qa python scripts/smoke_calendar_runtime.py | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha na homologação runtime do Google Calendar.' }
 }
 
