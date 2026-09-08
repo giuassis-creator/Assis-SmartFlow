@@ -1,7 +1,10 @@
 {$ASSIS_DOMAIN} {
   encode zstd gzip
 
-  @internal_webhooks path /webhook/internal/* /webhook/assis/internal/*
+  # Service-to-service webhooks must never be reachable through the public proxy.
+  # Provider-specific adapters are the public trust boundary and normalize into
+  # the authenticated Canonical Ingress over the Docker backend network.
+  @internal_webhooks path /webhook/internal/* /webhook/assis/internal/* /webhook/assis/v1/message
   respond @internal_webhooks 404
 
   header {
