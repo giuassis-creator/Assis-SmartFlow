@@ -78,7 +78,7 @@ foreach ($name in $workflowNames) {
   if (-not $SkipPublish) {
     Write-Host "Publicando adapter: $name ($id)"
     $out = & docker exec -u node $n8n n8n publish:workflow --id=$id 2>&1
-    if ($LASTEXITCODE -ne 0 -or (($out -join "`n") -match '(?i)error|failed|not found')) { throw "Falha ao publicar $name:`n$($out -join "`n")" }
+    if ($LASTEXITCODE -ne 0 -or (($out -join "`n") -match '(?i)error|failed|not found')) { throw "Falha ao publicar ${name}:`n$($out -join "`n")" }
   }
 }
 
