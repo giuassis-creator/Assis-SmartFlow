@@ -47,3 +47,14 @@ def test_policy_gateway_propagates_auth_to_business_ops():
         assert tool in text
         assert route in text
     assert 'x-assis-internal-token' in text
+
+
+def test_policy_gateway_preserves_identifiers_from_tool_arguments():
+    gateway = load(ROOT / 'library/agents/09-tool-policy-gateway.json')
+    policy = next(node for node in gateway['nodes'] if node['name'] == 'Policy + Route')
+    code = policy['parameters']['jsCode']
+    assert 'organization_id:b.organization_id??args.organization_id' in code
+    assert 'conversation_id:b.conversation_id??args.conversation_id' in code
+    assert 'contact_id:b.contact_id??args.contact_id' in code
+    assert 'idempotency_key:b.idempotency_key??args.idempotency_key' in code
+    assert 'trace_id:b.trace_id??args.trace_id' in code
