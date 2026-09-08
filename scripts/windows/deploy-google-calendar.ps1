@@ -13,19 +13,23 @@ $calendarWorkflowNames = @(
   'Starter 08 Calendar Reschedule',
   'Starter 09 Calendar Cancel'
 )
+$calendarImportPaths = @(
+  'starter/workflows/04-calendar-availability.json',
+  'starter/workflows/05-calendar-book.json',
+  'starter/workflows/08-calendar-reschedule.json',
+  'starter/workflows/09-calendar-cancel.json',
+  'library/agents/09-tool-policy-gateway.json'
+)
 
-Write-Host 'Sincronizando workflows endurecidos no n8n...'
-& "$PSScriptRoot\import-workflows.ps1" -Force
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflows.' }
+Write-Host 'Sincronizando somente workflows Calendar/Policy Gateway no n8n...'
+& "$PSScriptRoot\import-workflows.ps1" -Force -Only $calendarImportPaths
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflows Calendar.' }
 
-# import-workflows.ps1 intentionally imports workflows inactive. Configure Calendar first,
-# because that step also rebinds all symbolic PostgreSQL credentials introduced by the forced
-# import. Only after credentials are rebound can Internal Auth Verify be safely republished.
 Write-Host 'Aplicando migration, credenciais, publicação e Policy Gateway...'
 & "$PSScriptRoot\configure-google-calendar.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao configurar Google Calendar.' }
 
-Write-Host 'Republicando autenticação interna após a importação forçada...'
+Write-Host 'Confirmando autenticação interna publicada...'
 & "$PSScriptRoot\publish-internal-auth.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao republicar Internal Auth Verify.' }
 
@@ -42,9 +46,6 @@ function Invoke-PgScalar([string]$Sql) {
   return (($out | Where-Object { $_ }) -join '').Trim()
 }
 
-# n8n 2.x can rebuild its in-memory production webhook router without persisting rows in
-# webhook_entity for every published webhook. Treat activeVersionId as the publication
-# source of truth and prove actual route registration with the runtime smoke below.
 $calendarNamesSql = ($calendarWorkflowNames | ForEach-Object { "'$($_.Replace("'","''"))'" }) -join ','
 $publishedSql = @"
 SELECT count(*)
@@ -72,9 +73,6 @@ $authPublished = [int](Invoke-PgScalar $authPublishedSql)
 if ($authPublished -ne 1) { throw 'Internal Auth Verify perdeu activeVersionId durante o deploy Calendar.' }
 Write-Host 'PASS: Internal Auth Verify permanece publicado após o deploy Calendar.'
 
-# Container state "Started" only means the process was launched; n8n can still be booting
-# and rebuilding production webhook routes. Prove that port 5678 accepts TCP connections from
-# the same backend network used by the QA container before starting runtime homologation.
 Write-Host 'Aguardando n8n aceitar conexões internas após o recreate (até 120s)...'
 $ready = $false
 $readyDeadline = (Get-Date).AddSeconds(120)
@@ -91,9 +89,6 @@ if (-not $ready) {
   throw 'n8n não aceitou conexões internas na porta 5678 dentro de 120s.'
 }
 Write-Host 'PASS: n8n aceita conexões internas na rede backend.'
-
-# Give n8n a short stabilization window after opening the socket so production webhook
-# registration can finish before the first authenticated runtime request.
 Start-Sleep -Seconds 3
 
 Write-Host 'Validando bloqueio público dos webhooks internos no Caddy...'
@@ -114,5 +109,5 @@ if (-not $SkipRuntimeSmoke) {
   if ($LASTEXITCODE -ne 0) { throw 'Falha na homologação runtime do Google Calendar.' }
 }
 
-Write-Host 'PASS: implantação endurecida do Google Calendar concluída.'
+Write-Host 'PASS: implantação endurecida do Google Calendar concluída sem alterar workflows fora do módulo Calendar.'
 Write-Host 'Superfície final: https://assis.localhost; porta 5678 não é necessária para operação normal.'
