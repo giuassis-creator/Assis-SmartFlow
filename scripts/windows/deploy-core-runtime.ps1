@@ -106,6 +106,11 @@ if (-not $SkipSmoke) {
   Write-Host 'Atualizando imagem QA para refletir dependências e testes atuais...'
   & docker compose @compose build qa | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir a imagem QA.' }
+
+  Write-Host 'Validando contratos estáticos de Handoff/Kanban/CRM...'
+  & docker compose @compose run --rm qa pytest -q tests/test_business_ops_security.py | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de Handoff/Kanban/CRM.' }
+
   & "$PSScriptRoot\warm-local-ai.ps1"
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao aquecer a IA local antes da homologação.' }
   Write-Host 'Aguardando o n8n concluir o carregamento das rotas de produção (até 120s)...'
@@ -114,11 +119,18 @@ if (-not $SkipSmoke) {
     Show-CoreDiagnostics
     throw 'Homologação do Core Runtime falhou. O diagnóstico acima mostra o estado publicado, webhooks e log do n8n.'
   }
+
+  Write-Host 'Homologando Handoff, Kanban e CRM pelo Policy Gateway...'
+  & docker compose @compose run --rm qa python scripts/smoke_business_ops_runtime.py
+  if ($LASTEXITCODE -ne 0) {
+    Show-CoreDiagnostics
+    throw 'Homologação runtime de Handoff/Kanban/CRM falhou.'
+  }
 } else {
   Write-Host '5/5 Smoke test ignorado por parâmetro.'
 }
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + RAG automático + memória em dois turnos + Handoff + Kanban + CRM + Policy Gateway + Agent Runtime + Maya/Ollama.'
 Write-Host 'Workflows fora do Core não foram reimportados nem desativados por este deploy.'
