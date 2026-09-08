@@ -62,7 +62,13 @@ do {
 if ($publishedCount -lt 4) { throw "Somente $publishedCount/4 workflows Calendar possuem activeVersionId após a publicação." }
 Write-Host 'PASS: 4/4 workflows Calendar publicados (activeVersionId presente).'
 
-$authPublished = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE name='Internal Auth Verify' AND \"activeVersionId\" IS NOT NULL;")
+$authPublishedSql = @'
+SELECT count(*)
+FROM workflow_entity
+WHERE name='Internal Auth Verify'
+  AND "activeVersionId" IS NOT NULL;
+'@
+$authPublished = [int](Invoke-PgScalar $authPublishedSql)
 if ($authPublished -ne 1) { throw 'Internal Auth Verify perdeu activeVersionId durante o deploy Calendar.' }
 Write-Host 'PASS: Internal Auth Verify permanece publicado após o deploy Calendar.'
 
