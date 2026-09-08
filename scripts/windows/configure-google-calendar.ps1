@@ -8,11 +8,14 @@ Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
 $preferredCredentialName = 'Assis Google Calendar'
 $credentialType = 'googleCalendarOAuth2Api'
+$postgresCredentialName = 'Assis PostgreSQL'
+$postgresCredentialType = 'postgres'
 $workflowNames = @(
   'Starter 04 Calendar Availability',
   'Starter 05 Calendar Book',
   'Starter 08 Calendar Reschedule',
-  'Starter 09 Calendar Cancel'
+  'Starter 09 Calendar Cancel',
+  'Internal Tool Policy Gateway'
 )
 
 function Get-ComposeContainer([string]$Service) {
@@ -34,6 +37,11 @@ $postgres = Get-ComposeContainer 'postgres'
 $n8n = Get-ComposeContainer 'n8n'
 if (-not $postgres -or -not $n8n) { throw 'PostgreSQL e n8n precisam estar em execução.' }
 
+Write-Host 'Aplicando migration de idempotência de ferramentas...'
+$migration = & docker exec $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/005_tool_idempotency.sql' 2>&1
+if ($LASTEXITCODE -ne 0) { throw "Falha ao aplicar 005_tool_idempotency.sql:`n$($migration -join "`n")" }
+Write-Host 'PASS: tool_idempotency disponível.'
+
 $preferredCount = [int](Invoke-PgScalar "SELECT count(*) FROM credentials_entity WHERE name='$preferredCredentialName' AND type='$credentialType';")
 if ($preferredCount -gt 1) { throw "Há $preferredCount credenciais '$preferredCredentialName'. Mantenha apenas uma." }
 
@@ -53,10 +61,15 @@ if ($preferredCount -eq 1) {
   Write-Host "INFO: usando a única credencial Google Calendar disponível: '$credentialName' ($credentialId)."
 }
 
+$postgresCredentialCount = [int](Invoke-PgScalar "SELECT count(*) FROM credentials_entity WHERE name='$postgresCredentialName' AND type='$postgresCredentialType';")
+if ($postgresCredentialCount -ne 1) { throw "Esperava exatamente uma credencial '$postgresCredentialName' do tipo '$postgresCredentialType'; encontrei $postgresCredentialCount." }
+$postgresCredentialId = Invoke-PgScalar "SELECT id FROM credentials_entity WHERE name='$postgresCredentialName' AND type='$postgresCredentialType' LIMIT 1;"
+
 $escapedId = $credentialId.Replace("'","''")
 $escapedCredentialName = $credentialName.Replace("'","''")
+$escapedPostgresId = $postgresCredentialId.Replace("'","''")
 
-$bind = @"
+$bindGoogle = @"
 WITH target AS (
  SELECT id,name FROM credentials_entity WHERE id='$escapedId'
 ), patched AS (
@@ -77,11 +90,36 @@ SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
 FROM patched
 WHERE we.id=patched.id AND we.nodes::jsonb IS DISTINCT FROM patched.nodes;
 "@
-Invoke-Pg $bind
+Invoke-Pg $bindGoogle
 
-$unresolved = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_GOOGLE_CALENDAR%';")
-if ($unresolved -ne 0) { throw "Ainda existem $unresolved workflow(s) com ASSIS_GOOGLE_CALENDAR não resolvido." }
+$bindPostgres = @"
+WITH target AS (
+ SELECT id,name FROM credentials_entity WHERE id='$escapedPostgresId'
+), patched AS (
+ SELECT we.id,
+        jsonb_agg(
+          CASE WHEN n.node->'credentials'->'postgres'->>'id'='ASSIS_POSTGRES'
+                    OR n.node->'credentials'->'postgres'->>'name'='$postgresCredentialName'
+               THEN jsonb_set(jsonb_set(n.node,'{credentials,postgres,id}',to_jsonb(target.id::text),true),'{credentials,postgres,name}',to_jsonb(target.name::text),true)
+               ELSE n.node END ORDER BY n.ord) AS nodes
+ FROM workflow_entity we
+ CROSS JOIN target
+ CROSS JOIN LATERAL jsonb_array_elements(we.nodes::jsonb) WITH ORDINALITY AS n(node,ord)
+ GROUP BY we.id
+)
+UPDATE workflow_entity we
+SET nodes=patched.nodes::json,"updatedAt"=CURRENT_TIMESTAMP
+FROM patched
+WHERE we.id=patched.id AND we.nodes::jsonb IS DISTINCT FROM patched.nodes;
+"@
+Invoke-Pg $bindPostgres
+
+$unresolvedGoogle = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_GOOGLE_CALENDAR%';")
+if ($unresolvedGoogle -ne 0) { throw "Ainda existem $unresolvedGoogle workflow(s) com ASSIS_GOOGLE_CALENDAR não resolvido." }
+$unresolvedPostgres = [int](Invoke-PgScalar "SELECT count(*) FROM workflow_entity WHERE nodes::text LIKE '%ASSIS_POSTGRES%';")
+if ($unresolvedPostgres -ne 0) { throw "Ainda existem $unresolvedPostgres workflow(s) com ASSIS_POSTGRES não resolvido." }
 Write-Host "PASS: credencial Google Calendar vinculada: $credentialName ($credentialId)"
+Write-Host "PASS: credencial PostgreSQL vinculada aos gates de idempotência: $postgresCredentialName ($postgresCredentialId)"
 
 $ids = @()
 foreach ($name in $workflowNames) {
@@ -90,7 +128,7 @@ foreach ($name in $workflowNames) {
   if (-not $id) { throw "Workflow não encontrado: $name. Rode import-workflows.ps1 -Force primeiro." }
   $ids += $id
   if (-not $SkipPublish) {
-    Write-Host "Publicando adapter: $name ($id)"
+    Write-Host "Publicando: $name ($id)"
     $out = & docker exec -u node $n8n n8n publish:workflow --id=$id 2>&1
     if ($LASTEXITCODE -ne 0 -or (($out -join "`n") -match '(?i)error|failed|not found')) { throw "Falha ao publicar ${name}:`n$($out -join "`n")" }
   }
@@ -101,5 +139,5 @@ if (-not $SkipPublish) {
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao reiniciar n8n após publicar adapters Calendar.' }
 }
 
-Write-Host 'PASS: Google Calendar adapter configurado.'
-Write-Host 'Disponibilidade é leitura; book/reschedule/cancel continuam exigindo confirmed=true e idempotency_key.'
+Write-Host 'PASS: Google Calendar adapter endurecido e configurado.'
+Write-Host 'Calendar agora usa webhooks internos, autenticação por token e gate persistente de idempotência para writes.'
