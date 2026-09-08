@@ -131,6 +131,7 @@ def main():
     require(status == 200 and isinstance(bad_check, dict) and bad_check.get('valid') is False, f'Invalid internal token verifier response: {bad_check!r}')
 
     print('Direct internal endpoints reject invalid token...')
+    require_rejected('/webhook/assis/v1/message', {'organization_slug': 'blocked', 'channel': 'smoke', 'conversation_id': marker, 'message_id': marker, 'text': 'blocked'}, bad_auth)
     require_rejected('/webhook/internal/context', {'conversation_id': '00000000-0000-4000-8000-000000000000'}, bad_auth)
     require_rejected('/webhook/internal/memory/write', {'conversation_id': '00000000-0000-4000-8000-000000000000', 'summary': 'blocked'}, bad_auth)
     require_rejected('/webhook/internal/rag/search', {'organization_id': 'blocked', 'query': 'blocked'}, bad_auth)
@@ -257,7 +258,7 @@ def main():
     finally:
         delete_smoke_organization(smoke_org_id)
 
-    print('PASS: hardened internal endpoint auth, authenticated DLQ, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
+    print('PASS: hardened canonical ingress, internal endpoint auth, authenticated DLQ, automatic RAG, two-turn memory, policy gateway and Maya multi-agent chain are operational.')
 
 
 if __name__ == '__main__':
