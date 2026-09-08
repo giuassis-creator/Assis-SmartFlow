@@ -107,9 +107,9 @@ if (-not $SkipSmoke) {
   & docker compose @compose build qa | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir a imagem QA.' }
 
-  Write-Host 'Validando contratos estáticos de Handoff/Kanban/CRM...'
-  & docker compose @compose run --rm qa pytest -q tests/test_business_ops_security.py | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de Handoff/Kanban/CRM.' }
+  Write-Host 'Validando contratos estáticos de Handoff/Kanban/CRM e DLQ...'
+  & docker compose @compose run --rm qa pytest -q tests/test_business_ops_security.py tests/test_dlq_security.py | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de Handoff/Kanban/CRM/DLQ.' }
 
   & "$PSScriptRoot\warm-local-ai.ps1"
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao aquecer a IA local antes da homologação.' }
@@ -132,5 +132,5 @@ if (-not $SkipSmoke) {
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + RAG automático + memória em dois turnos + Handoff + Kanban + CRM + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + DLQ autenticada + RAG automático + memória em dois turnos + Handoff + Kanban + CRM + Policy Gateway + Agent Runtime + Maya/Ollama.'
 Write-Host 'Workflows fora do Core não foram reimportados nem desativados por este deploy.'
