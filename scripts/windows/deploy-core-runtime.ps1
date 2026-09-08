@@ -7,6 +7,31 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
+$coreImportPaths = @(
+  'library/agents/00-agent-runtime.json',
+  'library/agents/01-reception-agent-endpoint.json',
+  'library/agents/02-calendar-agent-endpoint.json',
+  'library/agents/03-knowledge-agent-endpoint.json',
+  'library/agents/04-crm-agent-endpoint.json',
+  'library/agents/05-finance-agent-endpoint.json',
+  'library/agents/06-document-agent-endpoint.json',
+  'library/agents/07-voice-agent-endpoint.json',
+  'library/agents/08-handoff-agent-endpoint.json',
+  'library/agents/09-tool-policy-gateway.json',
+  'library/agents/10-tool-noop.json',
+  'library/agents/11-internal-auth-verify.json',
+  'library/workflows/01-canonical-ingress.json',
+  'library/workflows/02-context-load.json',
+  'library/workflows/03-memory-write.json',
+  'library/workflows/04-handoff.json',
+  'library/workflows/05-kanban-upsert.json',
+  'library/workflows/06-rag-ingest.json',
+  'library/workflows/07-rag-search.json',
+  'library/workflows/08-dlq.json',
+  'library/workflows/11-crm-upsert-contact.json',
+  'library/workflows/12-crm-update-stage.json',
+  'starter/workflows/07-multi-agent-orchestrator.json'
+)
 
 function Get-ComposeContainer([string]$Service) {
   $out = & docker compose @compose ps -q $Service 2>&1
@@ -60,13 +85,15 @@ Write-Host '2/5 Aplicando hardening de rede e proxy...'
 & "$PSScriptRoot\apply-network-hardening.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao aplicar hardening de rede/proxy.' }
 
-Write-Host '3/5 Sincronizando workflows do repositório com o n8n...'
-& "$PSScriptRoot\import-workflows.ps1" -Force
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao sincronizar workflows com o n8n.' }
+Write-Host '3/5 Sincronizando somente workflows do Core com o n8n...'
+& "$PSScriptRoot\import-workflows.ps1" -Force -Only $coreImportPaths
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao sincronizar workflows do Core com o n8n.' }
 
 Write-Host '4/5 Configurando autenticação interna, vinculando credenciais e publicando núcleo seguro...'
 & "$PSScriptRoot\configure-internal-auth.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração da autenticação interna.' }
+& "$PSScriptRoot\bind-postgres-workflow-credentials.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao vincular credenciais PostgreSQL nos workflows/snapshots.' }
 & "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish:$SkipPublish
 if ($LASTEXITCODE -ne 0) { throw 'Falha na configuração do Core Runtime.' }
 if (-not $SkipPublish) {
@@ -93,5 +120,5 @@ if (-not $SkipSmoke) {
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + superfície de rede endurecida + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
-Write-Host 'Adapters externos continuam desativados até configuração das credenciais/provider adapters.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + RAG automático + memória em dois turnos + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Workflows fora do Core não foram reimportados nem desativados por este deploy.'
