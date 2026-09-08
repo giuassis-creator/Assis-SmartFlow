@@ -18,18 +18,16 @@ Write-Host 'Sincronizando workflows endurecidos no n8n...'
 & "$PSScriptRoot\import-workflows.ps1" -Force
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflows.' }
 
-# import-workflows.ps1 intentionally imports workflows inactive. Because the Calendar
-# deployment force-imports the whole workflow catalog, Internal Auth Verify must be
-# republished before any Calendar/Policy Gateway runtime call can authenticate.
-Write-Host 'Restaurando autenticação interna após a importação forçada...'
-& "$PSScriptRoot\configure-core-runtime.ps1" -SkipPublish
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao religar credenciais PostgreSQL do núcleo.' }
-& "$PSScriptRoot\publish-internal-auth.ps1"
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao republicar Internal Auth Verify.' }
-
+# import-workflows.ps1 intentionally imports workflows inactive. Configure Calendar first,
+# because that step also rebinds all symbolic PostgreSQL credentials introduced by the forced
+# import. Only after credentials are rebound can Internal Auth Verify be safely republished.
 Write-Host 'Aplicando migration, credenciais, publicação e Policy Gateway...'
 & "$PSScriptRoot\configure-google-calendar.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao configurar Google Calendar.' }
+
+Write-Host 'Republicando autenticação interna após a importação forçada...'
+& "$PSScriptRoot\publish-internal-auth.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao republicar Internal Auth Verify.' }
 
 Write-Host 'Restaurando o n8n para a superfície normal HTTPS via Caddy...'
 & docker compose @compose up -d --no-deps --force-recreate n8n | Out-Host
