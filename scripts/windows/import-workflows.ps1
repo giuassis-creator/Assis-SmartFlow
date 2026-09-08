@@ -1,4 +1,7 @@
-param([switch]$Force)
+param(
+  [switch]$Force,
+  [string[]]$Only
+)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
@@ -6,7 +9,8 @@ Set-Location $root
 $markerDir = Join-Path $root '.local'
 $marker = Join-Path $markerDir 'workflow-import-v7.done'
 $tempDir = Join-Path $markerDir 'workflow-import'
-if ((Test-Path $marker) -and -not $Force) {
+$selective = $Only -and $Only.Count -gt 0
+if ((Test-Path $marker) -and -not $Force -and -not $selective) {
   Write-Host 'Workflows já importados e validados neste clone. Use -Force apenas para revalidar/reimportar.'
   exit 0
 }
@@ -89,6 +93,12 @@ if ($useProjectId) {
   Write-Warning 'Nenhum projeto n8n existe ainda. Importando sem --projectId. Após concluir o setup/login do owner, reexecute este script com -Force para associar os workflows ao projeto pessoal.'
 }
 
+$normalizedOnly = @()
+if ($selective) {
+  $normalizedOnly = $Only | ForEach-Object { ($_ -replace '\\','/').TrimStart('./').ToLowerInvariant() }
+  Write-Host "Importação seletiva: $($normalizedOnly -join ', ')"
+}
+
 $filesToImport = @()
 foreach ($entry in $imports) {
   $hostDir = Join-Path $root $entry.Host
@@ -96,12 +106,20 @@ foreach ($entry in $imports) {
   $filesToImport += Get-ChildItem -Path $hostDir -Filter '*.json' -File | Where-Object {
     $_.Name -notin @('manifest.json','catalog.json')
   } | ForEach-Object {
-    [PSCustomObject]@{ Entry = $entry; File = $_ }
+    $relative = ($entry.Host + '/' + $_.Name).Replace('\\','/').ToLowerInvariant()
+    if (-not $selective -or $normalizedOnly -contains $relative) {
+      [PSCustomObject]@{ Entry = $entry; File = $_; RelativePath = $relative }
+    }
   }
 }
 $filesToImport = $filesToImport | Sort-Object { $_.Entry.Host }, { $_.File.Name }
 if (-not $filesToImport -or $filesToImport.Count -eq 0) {
   throw 'Nenhum workflow JSON foi encontrado para importação.'
+}
+if ($selective -and $filesToImport.Count -ne $normalizedOnly.Count) {
+  $found = $filesToImport.RelativePath
+  $missing = $normalizedOnly | Where-Object { $_ -notin $found }
+  throw "Workflow(s) solicitado(s) não encontrado(s): $($missing -join ', ')"
 }
 
 Write-Host "Workflows encontrados para importação: $($filesToImport.Count)"
@@ -111,7 +129,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao preparar diretório temporário no n8
 foreach ($item in $filesToImport) {
   $entry = $item.Entry
   $file = $item.File
-  $relativePath = ($entry.Host + '/' + $file.Name).Replace('\\','/').ToLowerInvariant()
+  $relativePath = $item.RelativePath
   $raw = Get-Content -Raw -Path $file.FullName
   $workflow = $raw | ConvertFrom-Json -Depth 100
 
@@ -119,8 +137,6 @@ foreach ($item in $filesToImport) {
     $workflow | Add-Member -NotePropertyName id -NotePropertyValue (Get-DeterministicGuid "assis-workflow:${relativePath}") -Force
   }
 
-  # O versionId precisa mudar quando o conteúdo do workflow muda. Mantê-lo fixo por caminho
-  # faz o n8n 2.x poder continuar publicando/executando um snapshot antigo em workflow_history.
   $contentHash = Get-Sha256Hex $raw
   $workflow | Add-Member -NotePropertyName versionId -NotePropertyValue (Get-DeterministicGuid "assis-version:${relativePath}:${contentHash}") -Force
 
@@ -163,10 +179,16 @@ if ($listCode -ne 0 -or $listText -match 'No workflows found') {
   throw "n8n ainda não consegue listar workflows após a importação:`n$listText"
 }
 
-Set-Content -Path $marker -Value (Get-Date).ToString('o') -Encoding ascii
-if ($useProjectId) {
-  Write-Host "PASS: $dbCount workflow(s) persistidos e associados ao projeto $projectId."
-} else {
-  Write-Host "PASS: $dbCount workflow(s) persistidos e visíveis no CLI. Nenhum projeto n8n existe ainda; finalize o setup do owner e depois reexecute com -Force."
+if (-not $selective) {
+  Set-Content -Path $marker -Value (Get-Date).ToString('o') -Encoding ascii
 }
-Write-Host 'Workflows importados e validados. Eles permanecem desativados por segurança até as credenciais/provedores serem configurados.'
+if ($useProjectId) {
+  Write-Host "PASS: $($filesToImport.Count) workflow(s) importados; banco contém $dbCount workflow(s) associados ao projeto $projectId."
+} else {
+  Write-Host "PASS: $($filesToImport.Count) workflow(s) importados; banco contém $dbCount workflow(s) visíveis no CLI."
+}
+if ($selective) {
+  Write-Host 'Importação seletiva concluída; workflows não selecionados permaneceram inalterados.'
+} else {
+  Write-Host 'Workflows importados e validados. Eles permanecem desativados por segurança até as credenciais/provedores serem configurados.'
+}
