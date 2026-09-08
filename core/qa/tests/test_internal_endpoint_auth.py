@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 PROTECTED = {
+    "library/workflows/01-canonical-ingress.json": "assis/v1/message",
     "library/workflows/02-context-load.json": "internal/context",
     "library/workflows/03-memory-write.json": "internal/memory/write",
     "library/workflows/06-rag-ingest.json": "internal/rag/ingest",
@@ -31,7 +32,7 @@ def test_protected_internal_workflows_verify_central_auth_before_business_logic(
             if n["type"] == "n8n-nodes-base.code"
         )
         assert "x-assis-internal-token" in code
-        assert "unauthorized internal" in code
+        assert "unauthorized" in code
         assert "assis/internal/auth/verify" in code
 
         verify_nodes = [
@@ -44,6 +45,12 @@ def test_protected_internal_workflows_verify_central_auth_before_business_logic(
             "auth_endpoint" in n["parameters"].get("url", "")
             for n in verify_nodes
         )
+
+
+def test_canonical_ingress_is_not_exposed_through_public_proxy():
+    caddy = (ROOT / "core/proxy/Caddyfile").read_text(encoding="utf-8")
+    assert "/webhook/assis/v1/message" in caddy
+    assert "respond @internal_webhooks 404" in caddy
 
 
 def test_agent_runtime_propagates_internal_token_to_context_rag_and_memory():
