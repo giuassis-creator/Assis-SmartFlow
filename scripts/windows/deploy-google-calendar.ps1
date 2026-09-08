@@ -7,6 +7,12 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
+$calendarWorkflowNames = @(
+  'Starter 04 Calendar Availability',
+  'Starter 05 Calendar Book',
+  'Starter 08 Calendar Reschedule',
+  'Starter 09 Calendar Cancel'
+)
 
 Write-Host 'Sincronizando workflows endurecidos no n8n...'
 & "$PSScriptRoot\import-workflows.ps1" -Force
@@ -20,32 +26,34 @@ Write-Host 'Restaurando o n8n para a superfície normal HTTPS via Caddy...'
 & docker compose @compose up -d --no-deps --force-recreate n8n | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao restaurar o n8n para a configuração normal.' }
 
-Write-Host 'Aguardando webhooks internos do Calendar (até 120s)...'
 $postgres = (((& docker compose @compose ps -q postgres 2>&1 | Where-Object { $_ }) -join '').Trim())
 if (-not $postgres) { throw 'Container PostgreSQL não encontrado.' }
-$calendarWebhookSql = @'
+
+function Invoke-PgScalar([string]$Sql) {
+  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
+  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
+  return (($out | Where-Object { $_ }) -join '').Trim()
+}
+
+# n8n 2.x can rebuild its in-memory production webhook router without persisting rows in
+# webhook_entity for every published webhook. Treat activeVersionId as the publication
+# source of truth and prove actual route registration with the runtime smoke below.
+$calendarNamesSql = ($calendarWorkflowNames | ForEach-Object { "'$($_.Replace("'","''"))'" }) -join ','
+$publishedSql = @"
 SELECT count(*)
-FROM webhook_entity
-WHERE path IN (
-  'assis/internal/calendar/availability',
-  'assis/internal/calendar/book',
-  'assis/internal/calendar/reschedule',
-  'assis/internal/calendar/cancel'
-);
-'@
+FROM workflow_entity
+WHERE name IN ($calendarNamesSql)
+  AND "activeVersionId" IS NOT NULL;
+"@
 $deadline = (Get-Date).AddSeconds(120)
-$webhookCount = 0
+$publishedCount = 0
 do {
-  $out = & docker exec --env "ASSIS_SQL=$calendarWebhookSql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
-  if ($LASTEXITCODE -eq 0) {
-    $raw = (($out | Where-Object { $_ }) -join '').Trim()
-    if ($raw -match '^\d+$') { $webhookCount = [int]$raw }
-  }
-  if ($webhookCount -ge 4) { break }
+  try { $publishedCount = [int](Invoke-PgScalar $publishedSql) } catch { $publishedCount = 0 }
+  if ($publishedCount -ge 4) { break }
   Start-Sleep -Seconds 3
 } while ((Get-Date) -lt $deadline)
-if ($webhookCount -lt 4) { throw "Somente $webhookCount/4 webhooks internos do Calendar foram registrados." }
-Write-Host 'PASS: 4/4 webhooks internos do Calendar registrados.'
+if ($publishedCount -lt 4) { throw "Somente $publishedCount/4 workflows Calendar possuem activeVersionId após a publicação." }
+Write-Host 'PASS: 4/4 workflows Calendar publicados (activeVersionId presente).'
 
 Write-Host 'Validando bloqueio público dos webhooks internos no Caddy...'
 $publicStatus = (& curl.exe -k -s -o NUL -w "%{http_code}" -X POST "https://assis.localhost/webhook/assis/internal/calendar/availability" -H "Content-Type: application/json" -d '{}').Trim()
