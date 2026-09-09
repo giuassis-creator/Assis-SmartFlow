@@ -18,7 +18,7 @@ def test_provider_registry_is_tenant_scoped_and_secret_free():
 
 def test_waha_is_internal_persistent_and_default_provider():
     compose = (ROOT / 'core/docker-compose.yml').read_text(encoding='utf-8')
-    assert 'image: devlikeapro/waha:${WAHA_VERSION:-2026.8.2}' in compose
+    assert 'image: devlikeapro/waha:${WAHA_IMAGE_TAG:-gows-2026.8.2}' in compose
     assert 'WHATSAPP_DEFAULT_ENGINE: ${WAHA_ENGINE:-GOWS}' in compose
     assert 'waha_sessions:/app/.sessions' in compose
     assert 'waha_media:/app/.media' in compose
