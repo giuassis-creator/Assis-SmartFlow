@@ -48,6 +48,33 @@ function Restart-WahaSession([string]$Session,[hashtable]$Headers) {
   }
 }
 
+function Invoke-PgScalar([string]$Sql) {
+  $postgres = Get-ComposeContainer 'postgres'
+  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
+  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
+  return (($out | Where-Object { $_ }) -join '').Trim()
+}
+
+function Test-WahaLifecycleWebhook([string]$Secret,[string]$Session) {
+  $n8n = Get-ComposeContainer 'n8n'
+  $body = @{event='session.status';session=$Session;payload=@{status='SCAN_QR_CODE'}} | ConvertTo-Json -Depth 5 -Compress
+  $script = @'
+const secret=process.env.ASSIS_SECRET;
+const body=process.env.ASSIS_BODY;
+fetch('http://127.0.0.1:5678/webhook/adapter/waha/in',{
+  method:'POST',
+  headers:{'content-type':'application/json','x-assis-secret':secret},
+  body
+}).then(async r=>console.log(String(r.status)+'|'+await r.text())).catch(e=>{console.error(e);process.exit(2);});
+'@
+  $out = & docker exec --env "ASSIS_SECRET=$Secret" --env "ASSIS_BODY=$body" $n8n node -e $script 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "Falha ao testar webhook WAHA:`n$($out -join "`n")" }
+  $text = (($out | Where-Object { $_ }) -join "`n").Trim()
+  $status = ($text -split '\|',2)[0].Trim()
+  if ($status -ne '200') { throw "Webhook WAHA lifecycle retornou HTTP $status: $text" }
+  Write-Host 'PASS: webhook WAHA lifecycle autenticado responde HTTP 200 sem encaminhar evento não-mensagem.'
+}
+
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
 
 $session = Read-EnvValue 'WAHA_SESSION'
@@ -55,10 +82,6 @@ if ([string]::IsNullOrWhiteSpace($session)) { $session = 'default'; Set-EnvValue
 $orgName = Read-EnvValue 'ORG_NAME'
 if ([string]::IsNullOrWhiteSpace($orgName)) { $orgName = 'Minha Empresa' }
 
-# The initial failed deployment could persist a temporary evolution-smoke-* slug
-# in WAHA_ORGANIZATION_SLUG. A real WhatsApp session must never be paired to a
-# smoke-test tenant. Re-home the configured WAHA session to the canonical default
-# organization before allowing pairing.
 $currentSlug = Read-EnvValue 'WAHA_ORGANIZATION_SLUG'
 $mustRepair = [string]::IsNullOrWhiteSpace($currentSlug) -or $currentSlug -match '(?i)(^|[-_])smoke([-_]|$)' -or $currentSlug -match '(?i)^evolution-smoke-'
 if ($mustRepair) {
@@ -109,9 +132,22 @@ Write-Host 'PASS: tenant temporário não será usado no pareamento WhatsApp.'
 & "$PSScriptRoot\deploy-waha-provider.ps1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# WAHA intentionally expires QR codes. After the QR refresh budget is exhausted
-# an unpaired session moves to FAILED. Recover that state non-destructively by
-# restarting the session, then immediately persist a fresh QR for the operator.
+# Pairing is blocked until the public WAHA adapter has a real active n8n version
+# and can acknowledge lifecycle events. This prevents another QR attempt while the
+# provider is posting into a stale/non-active workflow snapshot.
+$activeSql = @"
+SELECT count(*)
+FROM workflow_entity
+WHERE name='Starter 08 WAHA Inbound'
+  AND "activeVersionId" IS NOT NULL;
+"@
+$activeCount = Invoke-PgScalar $activeSql
+if ($activeCount -ne '1') { throw "Starter 08 WAHA Inbound não possui exatamente uma versão ativa (count=$activeCount). Pareamento bloqueado." }
+Write-Host 'PASS: Starter 08 WAHA Inbound possui activeVersionId.'
+$webhookSecret = Read-EnvValue 'WAHA_WEBHOOK_SECRET'
+if ([string]::IsNullOrWhiteSpace($webhookSecret)) { throw 'WAHA_WEBHOOK_SECRET não encontrado no .env.' }
+Test-WahaLifecycleWebhook $webhookSecret $session
+
 $apiKey = Read-EnvValue 'WAHA_API_KEY'
 if ([string]::IsNullOrWhiteSpace($apiKey)) { throw 'WAHA_API_KEY não encontrado no .env.' }
 $headers = @{'X-Api-Key'=$apiKey;Accept='application/json'}
@@ -131,8 +167,6 @@ Write-Host "Estado WAHA pós-recuperação: $($state.status)"
 if ($state.status -eq 'SCAN_QR_CODE') {
   $local = Join-Path $root '.local'
   New-Item -ItemType Directory -Force -Path $local | Out-Null
-  # Never overwrite a QR file that may still be open in Windows Photos/Explorer.
-  # Windows can hold a mapped section on the PNG and reject in-place replacement.
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
   $qr = Join-Path $local "waha-qr-$stamp.png"
   $qrUrl = 'http://127.0.0.1:3000/api/' + [uri]::EscapeDataString($session) + '/auth/qr'
