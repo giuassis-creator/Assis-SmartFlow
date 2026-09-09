@@ -80,14 +80,26 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir QA.' }
 if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de captura automática de memória.' }
 
 Write-Host '6/6 Homologando captura automática, bloqueio de dado restrito e recall entre conversas...'
-& docker compose @compose --profile tools run --rm qa python scripts/smoke_auto_memory_capture_runtime.py | Out-Host
-if ($LASTEXITCODE -ne 0) {
+$smokeOutput = & docker compose @compose --profile tools run --rm qa python scripts/smoke_auto_memory_capture_runtime.py 2>&1
+$smokeExit = $LASTEXITCODE
+$smokeOutput | Out-Host
+if ($smokeExit -ne 0) {
+  Write-Host ''
+  Write-Host '=== FALHA ISOLADA DA HOMOLOGAÇÃO ==='
+  $stageLines = @($smokeOutput | Where-Object { "$_" -match 'AUTO_MEMORY_STAGE=' })
+  if ($stageLines.Count -gt 0) {
+    $stageLines | ForEach-Object { Write-Host $_ }
+  } else {
+    Write-Host 'AUTO_MEMORY_STAGE não apareceu na saída; exibindo as últimas 40 linhas do smoke:'
+    @($smokeOutput | Select-Object -Last 40) | Out-Host
+  }
+
   $n8n = Get-ComposeContainer 'n8n'
   if ($n8n) {
     Write-Host '--- últimas 200 linhas do n8n ---'
     & docker logs --tail 200 $n8n 2>&1 | Out-Host
   }
-  throw 'Homologação runtime da captura automática de memória falhou.'
+  throw 'Homologação runtime da captura automática de memória falhou. Veja a seção FALHA ISOLADA DA HOMOLOGAÇÃO acima.'
 }
 
 Write-Host ''
