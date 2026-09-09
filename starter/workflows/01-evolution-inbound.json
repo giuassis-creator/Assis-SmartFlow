@@ -17,13 +17,39 @@
     },
     {
       "parameters": {
-        "jsCode": "const envelope=$json;const b=envelope.body??envelope;const h=envelope.headers??{};const configured=String($env.EVOLUTION_WEBHOOK_SECRET??'').trim();if(!configured||configured==='CHANGE_ME_LONG_RANDOM_EVOLUTION_SECRET'||configured.length<32)throw new Error('evolution webhook secret not configured');const supplied=String(h['x-assis-secret']??h['X-Assis-Secret']??'');if(!supplied||supplied!==configured)throw new Error('unauthorized evolution webhook');const d=b.data??b;const remote=d.key?.remoteJid??d.from??'';const messageId=d.key?.id??d.id??null;if(!remote||!messageId)throw new Error('evolution remote contact and message id required');return [{json:{organization_slug:b.organization_slug??'default',channel:'whatsapp',contact:{external_id:remote,name:d.pushName??d.name??null,phone:remote},conversation_id:remote,message_id:messageId,external_message_id:messageId,message_type:d.message?.audioMessage?'audio':'text',text:d.message?.conversation??d.message?.extendedTextMessage?.text??d.text??'',timestamp:d.messageTimestamp??b.timestamp??null,raw:b}}];"
+        "jsCode": "const envelope=$json;const b=envelope.body??envelope;const h=envelope.headers??{};const supplied=String(h['x-assis-secret']??h['X-Assis-Secret']??'').trim();if(!supplied)throw new Error('unauthorized evolution webhook');return [{json:{body:b,provider_token:supplied,auth_endpoint:'http://n8n:5678/webhook/assis/internal/auth/verify',auth_request:{token:supplied,secret_name:'evolution-webhook'}}}];"
       },
-      "id": "verify-and-normalize",
-      "name": "Verify and Normalize",
+      "id": "prepare-provider-auth",
+      "name": "Prepare Provider Auth",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [260,0]
+      "position": [240,0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.auth_endpoint }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.auth_request) }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "verify-provider-auth",
+      "name": "Verify Provider Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460,0]
+    },
+    {
+      "parameters": {
+        "jsCode": "if($json.valid!==true)throw new Error('unauthorized evolution webhook');const src=$node['Prepare Provider Auth'].json;const b=src.body;const d=b.data??b;const remote=d.key?.remoteJid??d.from??'';const messageId=d.key?.id??d.id??null;if(!remote||!messageId)throw new Error('evolution remote contact and message id required');return [{json:{provider_token:src.provider_token,payload:{organization_slug:b.organization_slug??'default',channel:'whatsapp',contact:{external_id:remote,name:d.pushName??d.name??null,phone:remote},conversation_id:remote,message_id:messageId,external_message_id:messageId,message_type:d.message?.audioMessage?'audio':'text',text:d.message?.conversation??d.message?.extendedTextMessage?.text??d.text??'',timestamp:d.messageTimestamp??b.timestamp??null,raw:b}}}];"
+      },
+      "id": "normalize-evolution",
+      "name": "Normalize Evolution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680,0]
     },
     {
       "parameters": {
@@ -32,34 +58,28 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "x-assis-internal-token",
-              "value": "={{ $env.INTERNAL_AGENT_TOKEN }}"
-            }
+            {"name":"x-assis-provider-token","value":"={{ $json.provider_token }}"},
+            {"name":"x-assis-auth-scope","value":"evolution-webhook"}
           ]
         },
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify($json) }}",
-        "options": {
-          "timeout": 30000
-        }
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {"timeout": 30000}
       },
       "id": "forward-canonical",
       "name": "Forward Canonical Ingress",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520,0]
+      "position": [900,0]
     }
   ],
   "connections": {
-    "Evolution Webhook": {
-      "main": [[{"node":"Verify and Normalize","type":"main","index":0}]]
-    },
-    "Verify and Normalize": {
-      "main": [[{"node":"Forward Canonical Ingress","type":"main","index":0}]]
-    }
+    "Evolution Webhook": {"main":[[{"node":"Prepare Provider Auth","type":"main","index":0}]]},
+    "Prepare Provider Auth": {"main":[[{"node":"Verify Provider Auth","type":"main","index":0}]]},
+    "Verify Provider Auth": {"main":[[{"node":"Normalize Evolution","type":"main","index":0}]]},
+    "Normalize Evolution": {"main":[[{"node":"Forward Canonical Ingress","type":"main","index":0}]]}
   },
   "pinData": {},
   "settings":{"executionOrder":"v1"},
