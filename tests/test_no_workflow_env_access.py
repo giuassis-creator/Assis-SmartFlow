@@ -26,4 +26,10 @@ def test_n8n_env_access_is_blocked_by_default():
     env_example = (ROOT / '.env.example').read_text(encoding='utf-8')
     assert 'N8N_BLOCK_ENV_ACCESS_IN_NODE: ${N8N_BLOCK_ENV_ACCESS_IN_NODE:-true}' in compose
     assert 'N8N_BLOCK_ENV_ACCESS_IN_NODE=true' in env_example
-    assert 'INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}' not in compose
+
+    # INTERNAL_AGENT_TOKEN is still intentionally available to the QA service so
+    # runtime smoke tests can authenticate against hardened internal endpoints.
+    # The security requirement is specifically that the n8n process itself does
+    # not receive the raw token.
+    n8n_block = compose.split('  n8n:\n', 1)[1].split('\n  ollama:', 1)[0]
+    assert 'INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}' not in n8n_block
