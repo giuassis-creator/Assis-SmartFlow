@@ -21,6 +21,7 @@ $safeWorkflowNames = @(
   '08 DLQ Capture',
   '11 CRM Upsert Contact',
   '12 CRM Update Stage',
+  '13 Automatic Durable Memory Capture',
   'Internal Tool Noop',
   'Internal Tool Policy Gateway',
   'Library Agent Runtime',
@@ -240,9 +241,6 @@ FROM webhook_entity
 WHERE "workflowId" IN ($idsSql);
 "@
 
-# Após restart o processo do n8n pode levar alguns segundos para reconstruir o índice de
-# workflows ativos e persistir novamente webhook_entity. Não tratar a janela transitória
-# como falha de publicação.
 $webhookCount = 0
 $deadline = (Get-Date).AddSeconds(120)
 $attempt = 0
