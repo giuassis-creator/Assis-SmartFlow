@@ -87,7 +87,7 @@ services:
     networks: [frontend, backend]
 
   waha:
-    image: devlikeapro/waha:${WAHA_VERSION:-2026.8.2}
+    image: devlikeapro/waha:${WAHA_IMAGE_TAG:-gows-2026.8.2}
     restart: unless-stopped
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:-}
