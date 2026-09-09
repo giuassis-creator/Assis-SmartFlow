@@ -55,6 +55,7 @@ services:
       N8N_HOST: ${N8N_HOST}
       N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-${WEBHOOK_URL}}
+      WEBHOOK_URL: ${WEBHOOK_URL}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-America/Sao_Paulo}
       TZ: ${TZ:-America/Sao_Paulo}
       N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
@@ -77,7 +78,6 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
       AI_ALLOW_PAID_FALLBACK: ${AI_ALLOW_PAID_FALLBACK:-false}
       INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN}
-      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-}
     volumes:
       - n8n_data:/home/node/.n8n
       - ../library:/opt/assis/library:ro
