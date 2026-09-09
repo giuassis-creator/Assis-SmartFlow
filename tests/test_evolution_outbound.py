@@ -16,7 +16,8 @@ def test_outbound_workflow_is_internal_authenticated_and_idempotent():
     assert '/webhook/assis/internal/auth/verify' in text
     assert 'message.send_text' in text
     assert 'tool_idempotency' in text
-    assert 'provider-gateway:8080/v1/evolution/send-text' in text
+    assert 'provider-gateway:8080/v1/whatsapp/send-text' in text
+    assert 'organization_whatsapp_providers' in text
     assert 'Persist Outbound Message' in text
     assert '$env.' not in text
 
@@ -31,7 +32,7 @@ def test_policy_gateway_routes_reception_send_text_only_through_internal_adapter
 
 def test_provider_gateway_keeps_evolution_api_key_out_of_n8n():
     compose = (ROOT / 'core/docker-compose.yml').read_text(encoding='utf-8')
-    n8n_block = compose.split('\n  n8n:\n', 1)[1].split('\n  provider-gateway:\n', 1)[0]
+    n8n_block = compose.split('\n  n8n:\n', 1)[1].split('\n  waha:\n', 1)[0]
     gateway_block = compose.split('\n  provider-gateway:\n', 1)[1].split('\n  ollama:\n', 1)[0]
     assert 'EVOLUTION_API_KEY' not in n8n_block
     assert 'EVOLUTION_INSTANCE' not in n8n_block
