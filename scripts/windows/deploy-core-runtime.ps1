@@ -30,6 +30,7 @@ $coreImportPaths = @(
   'library/workflows/08-dlq.json',
   'library/workflows/11-crm-upsert-contact.json',
   'library/workflows/12-crm-update-stage.json',
+  'library/workflows/13-auto-memory-capture.json',
   'starter/workflows/07-multi-agent-orchestrator.json'
 )
 
@@ -61,7 +62,7 @@ WHERE we."activeVersionId" IS NOT NULL
     we.name LIKE 'Internal %'
     OR we.name = 'Library Agent Runtime'
     OR we.name = 'Starter 07 Maya Multi-Agent Orchestrator'
-    OR we.name IN ('01 Canonical Ingress','02 Context Load','03 Memory Write','04 Handoff','05 Kanban Upsert','06 RAG Ingest','07 RAG Search','08 DLQ Capture','11 CRM Upsert Contact','12 CRM Update Stage')
+    OR we.name IN ('01 Canonical Ingress','02 Context Load','03 Memory Write','04 Handoff','05 Kanban Upsert','06 RAG Ingest','07 RAG Search','08 DLQ Capture','11 CRM Upsert Contact','12 CRM Update Stage','13 Automatic Durable Memory Capture')
   )
 GROUP BY we.name, we.id, we."versionId", we."activeVersionId"
 ORDER BY we.name;
@@ -107,9 +108,9 @@ if (-not $SkipSmoke) {
   & docker compose @compose build qa | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir a imagem QA.' }
 
-  Write-Host 'Validando contratos estáticos de Handoff/Kanban/CRM e DLQ...'
-  & docker compose @compose run --rm qa pytest -q tests/test_business_ops_security.py tests/test_dlq_security.py | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de Handoff/Kanban/CRM/DLQ.' }
+  Write-Host 'Validando contratos estáticos de Handoff/Kanban/CRM, DLQ e memória automática...'
+  & docker compose @compose run --rm qa pytest -q -p no:cacheprovider tests/test_business_ops_security.py tests/test_dlq_security.py tests/test_auto_memory_capture.py | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Falha nos contratos estáticos de Handoff/Kanban/CRM/DLQ/memória automática.' }
 
   & "$PSScriptRoot\warm-local-ai.ps1"
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao aquecer a IA local antes da homologação.' }
@@ -132,5 +133,5 @@ if (-not $SkipSmoke) {
 
 Write-Host ''
 Write-Host 'PASS: implantação do Core Runtime concluída.'
-Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + DLQ autenticada + RAG automático + memória em dois turnos + Handoff + Kanban + CRM + Policy Gateway + Agent Runtime + Maya/Ollama.'
+Write-Host 'Núcleo validado: PostgreSQL + autenticação interna por hash + endpoints internos protegidos + DLQ autenticada + RAG automático + memória curta/longa + captura automática guardada + Handoff + Kanban + CRM + Policy Gateway + Agent Runtime + Maya/Ollama.'
 Write-Host 'Workflows fora do Core não foram reimportados nem desativados por este deploy.'
