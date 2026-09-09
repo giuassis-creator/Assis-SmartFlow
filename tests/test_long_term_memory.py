@@ -8,9 +8,13 @@ def load(path):
     return json.loads((ROOT / path).read_text())
 
 
+def dump(workflow):
+    return json.dumps(workflow, ensure_ascii=False)
+
+
 def test_memory_write_supports_policy_guarded_long_term_upsert():
     workflow = load('library/workflows/03-memory-write.json')
-    text = json.dumps(workflow)
+    text = dump(workflow)
     code = ' '.join(
         node.get('parameters', {}).get('jsCode', '')
         for node in workflow['nodes']
@@ -25,7 +29,7 @@ def test_memory_write_supports_policy_guarded_long_term_upsert():
 
 def test_context_load_includes_unexpired_contact_long_term_memory():
     workflow = load('library/workflows/02-context-load.json')
-    text = json.dumps(workflow)
+    text = dump(workflow)
     assert 'long_term_memory' in text
     assert 'long_term_memories' in text
     assert 'ltm.organization_id=c.organization_id' in text
