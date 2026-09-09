@@ -60,6 +60,29 @@ function Invoke-PgScalar([string]$Sql) {
   return (($out | Where-Object { $_ }) -join '').Trim()
 }
 
+function Wait-ProductionRoutes([string]$N8nContainer) {
+  Write-Host 'Aguardando rotas internas de produção do verifier e Canonical Ingress...'
+  $deadline = (Get-Date).AddSeconds(120)
+  $attempt = 0
+  do {
+    $attempt++
+    $authProbe = & docker exec $N8nContainer sh -lc "wget -q -O- --header='Content-Type: application/json' --post-data='{\"token\":\"invalid-route-probe\",\"secret_name\":\"core-internal-agent\"}' http://127.0.0.1:5678/webhook/assis/internal/auth/verify 2>/dev/null || true" 2>$null
+    $authReady = (($authProbe -join '') -match '"valid"\s*:\s*false')
+
+    $canonicalProbe = & docker exec $N8nContainer sh -lc "wget -S -O /dev/null --header='Content-Type: application/json' --header='x-assis-internal-token: invalid-route-probe' --post-data='{}' http://127.0.0.1:5678/webhook/assis/v1/message 2>&1 | awk '/HTTP\//{code=\$2} END{print code}'" 2>$null
+    $canonicalStatus = (($canonicalProbe | Where-Object { $_ }) -join '').Trim()
+    $canonicalReady = (-not [string]::IsNullOrWhiteSpace($canonicalStatus) -and $canonicalStatus -ne '404')
+
+    if ($authReady -and $canonicalReady) {
+      Write-Host "PASS: verifier e Canonical Ingress registrados após $attempt tentativa(s)."
+      return
+    }
+    Start-Sleep -Seconds 3
+  } while ((Get-Date) -lt $deadline)
+
+  throw "Rotas internas não ficaram prontas em até 120s. authReady=$authReady canonicalStatus='$canonicalStatus'"
+}
+
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
 
 Write-Host '=== Assis SmartFlow Evolution Inbound - Hashed Provider Auth ==='
@@ -128,7 +151,7 @@ do {
   Start-Sleep -Seconds 3
 } while ((Get-Date) -lt $deadline)
 if ((Get-Date) -ge $deadline) { throw 'n8n não ficou pronto em até 120s.' }
-Start-Sleep -Seconds 3
+Wait-ProductionRoutes $n8n
 
 $envCheck = & docker exec $n8n sh -lc 'if [ -n "${EVOLUTION_WEBHOOK_SECRET:-}" ]; then echo PRESENT; else echo ABSENT; fi' 2>&1
 if (($envCheck -join '').Trim() -ne 'ABSENT') { throw 'EVOLUTION_WEBHOOK_SECRET ainda está exposto no ambiente do n8n.' }
