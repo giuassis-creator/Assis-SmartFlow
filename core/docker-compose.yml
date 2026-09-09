@@ -86,6 +86,25 @@ services:
       - ../mcp:/opt/assis/mcp:ro
     networks: [frontend, backend]
 
+  provider-gateway:
+    build:
+      context: ./provider-gateway
+    restart: unless-stopped
+    depends_on:
+      n8n: {condition: service_started}
+    environment:
+      N8N_INTERNAL_URL: http://n8n:5678
+      EVOLUTION_BASE_URL: ${EVOLUTION_BASE_URL:-}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-}
+      EVOLUTION_SENDTEXT_PAYLOAD_STYLE: ${EVOLUTION_SENDTEXT_PAYLOAD_STYLE:-modern}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [backend, ai_egress]
+
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-0.33.3}
     restart: unless-stopped
