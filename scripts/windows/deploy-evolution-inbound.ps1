@@ -92,7 +92,7 @@ Start-Sleep -Seconds 3
 Write-Host '4/5 Validando contrato estático do adapter Evolution...'
 & docker compose @compose --profile tools build qa | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir imagem QA.' }
-& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py | Out-Host
+& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py -p no:cacheprovider | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha nos testes estáticos do adapter Evolution.' }
 
 Write-Host '5/5 Homologando fronteira pública Evolution -> Canonical Ingress...'
@@ -112,14 +112,23 @@ if ([string]::IsNullOrWhiteSpace($orgId)) { throw 'Não foi possível criar orga
 try {
   $payload = @{ organization_slug=$slug; data=@{ key=@{ remoteJid=$remote; id=$msgId }; pushName='Evolution Smoke'; message=@{ conversation='Mensagem de homologação Evolution' } } } | ConvertTo-Json -Depth 8 -Compress
   $tmp = Join-Path $env:TEMP "assis-evolution-$marker.json"
+  $badOut = Join-Path $env:TEMP "assis-evolution-bad-$marker.txt"
+  $goodOut = Join-Path $env:TEMP "assis-evolution-good-$marker.txt"
   Set-Content -Path $tmp -Value $payload -Encoding utf8
 
-  $badStatus = (& curl.exe -k -s -o NUL -w "%{http_code}" -X POST "https://assis.localhost/webhook/adapter/evolution/in" -H "Content-Type: application/json" -H "x-assis-secret: invalid-$marker" --data-binary "@$tmp").Trim()
+  $badStatus = (& curl.exe -k -sS -o $badOut -w "%{http_code}" -X POST "https://assis.localhost/webhook/adapter/evolution/in" -H "Content-Type: application/json" -H "x-assis-secret: invalid-$marker" --data-binary "@$tmp").Trim()
   if ($badStatus -eq '200') { throw 'Adapter Evolution aceitou segredo inválido.' }
   Write-Host "PASS: segredo inválido rejeitado (HTTP $badStatus)."
 
-  $goodStatus = (& curl.exe -k -s -o NUL -w "%{http_code}" -X POST "https://assis.localhost/webhook/adapter/evolution/in" -H "Content-Type: application/json" -H "x-assis-secret: $secret" --data-binary "@$tmp").Trim()
-  if ($goodStatus -ne '200') { throw "Adapter Evolution válido retornou HTTP $goodStatus." }
+  $goodStatus = (& curl.exe -k -sS -o $goodOut -w "%{http_code}" -X POST "https://assis.localhost/webhook/adapter/evolution/in" -H "Content-Type: application/json" -H "x-assis-secret: $secret" --data-binary "@$tmp").Trim()
+  if ($goodStatus -ne '200') {
+    $goodBody = if (Test-Path $goodOut) { (Get-Content $goodOut -Raw).Trim() } else { '' }
+    Write-Host '--- corpo da resposta Evolution válida ---'
+    if ($goodBody) { Write-Host $goodBody } else { Write-Host '(vazio)' }
+    Write-Host '--- últimas 120 linhas do log n8n ---'
+    & docker logs --tail 120 $n8n 2>&1 | Out-Host
+    throw "Adapter Evolution válido retornou HTTP $goodStatus. Diagnóstico acima."
+  }
 
   Start-Sleep -Seconds 2
   $verifySql = @"
@@ -135,6 +144,8 @@ WHERE o.slug='$slug'
   Write-Host 'PASS: Evolution autenticado atravessou o adapter e foi persistido pelo Canonical Ingress.'
 } finally {
   Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-$marker.json")
+  Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-bad-$marker.txt")
+  Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-good-$marker.txt")
   $cleanupSql = "DELETE FROM organizations WHERE id='$orgId'::uuid;"
   & docker exec --env "ASSIS_SQL=$cleanupSql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$ASSIS_SQL"' *> $null
 }
