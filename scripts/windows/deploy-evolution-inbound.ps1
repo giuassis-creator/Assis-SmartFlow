@@ -60,27 +60,40 @@ function Invoke-PgScalar([string]$Sql) {
   return (($out | Where-Object { $_ }) -join '').Trim()
 }
 
+function Get-ProbeStatus([string]$N8nContainer,[string]$Path) {
+  # A POST with an empty JSON body is enough to distinguish a registered route
+  # from n8n's 404 "webhook not registered" response. Parse wget output in
+  # PowerShell instead of shell/awk so $-expansion cannot corrupt the probe.
+  $probe = & docker exec $N8nContainer sh -lc "wget -S -O /dev/null --header='Content-Type: application/json' --post-data='{}' 'http://127.0.0.1:5678$Path' 2>&1 || true" 2>&1
+  $text = ($probe | Out-String)
+  $matches = [regex]::Matches($text,'HTTP/\S+\s+(\d{3})')
+  if ($matches.Count -eq 0) { return '' }
+  return $matches[$matches.Count - 1].Groups[1].Value
+}
+
 function Wait-ProductionRoutes([string]$N8nContainer) {
   Write-Host 'Aguardando rotas internas de produção do verifier e Canonical Ingress...'
   $deadline = (Get-Date).AddSeconds(120)
   $attempt = 0
+  $authStatus = ''
+  $canonicalStatus = ''
   do {
     $attempt++
-    $authProbe = & docker exec $N8nContainer sh -lc "wget -q -O- --header='Content-Type: application/json' --post-data='{\"token\":\"invalid-route-probe\",\"secret_name\":\"core-internal-agent\"}' http://127.0.0.1:5678/webhook/assis/internal/auth/verify 2>/dev/null || true" 2>$null
-    $authReady = (($authProbe -join '') -match '"valid"\s*:\s*false')
-
-    $canonicalProbe = & docker exec $N8nContainer sh -lc "wget -S -O /dev/null --header='Content-Type: application/json' --header='x-assis-internal-token: invalid-route-probe' --post-data='{}' http://127.0.0.1:5678/webhook/assis/v1/message 2>&1 | awk '/HTTP\//{code=\$2} END{print code}'" 2>$null
-    $canonicalStatus = (($canonicalProbe | Where-Object { $_ }) -join '').Trim()
+    $authStatus = Get-ProbeStatus $N8nContainer '/webhook/assis/internal/auth/verify'
+    $canonicalStatus = Get-ProbeStatus $N8nContainer '/webhook/assis/v1/message'
+    $authReady = (-not [string]::IsNullOrWhiteSpace($authStatus) -and $authStatus -ne '404')
     $canonicalReady = (-not [string]::IsNullOrWhiteSpace($canonicalStatus) -and $canonicalStatus -ne '404')
 
     if ($authReady -and $canonicalReady) {
-      Write-Host "PASS: verifier e Canonical Ingress registrados após $attempt tentativa(s)."
+      Write-Host "PASS: verifier e Canonical Ingress registrados após $attempt tentativa(s) (auth=$authStatus canonical=$canonicalStatus)."
       return
     }
     Start-Sleep -Seconds 3
   } while ((Get-Date) -lt $deadline)
 
-  throw "Rotas internas não ficaram prontas em até 120s. authReady=$authReady canonicalStatus='$canonicalStatus'"
+  Write-Host '--- últimas 180 linhas do log n8n ---'
+  & docker logs --tail 180 $N8nContainer 2>&1 | Out-Host
+  throw "Rotas internas não ficaram prontas em até 120s. authStatus='$authStatus' canonicalStatus='$canonicalStatus'. Diagnóstico do n8n acima."
 }
 
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
