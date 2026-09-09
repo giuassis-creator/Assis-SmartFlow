@@ -40,9 +40,14 @@ def test_evolution_adapter_uses_scoped_hashed_provider_auth_without_env_access()
 def test_canonical_ingress_accepts_only_known_scoped_provider_auth():
     workflow = load('library/workflows/01-canonical-ingress.json')
     text = json.dumps(workflow)
+    code = '\n'.join(
+        n.get('parameters', {}).get('jsCode', '')
+        for n in workflow['nodes']
+        if n['type'] == 'n8n-nodes-base.code'
+    )
     assert 'x-assis-provider-token' in text
-    assert "scope==='evolution-webhook'" in text
-    assert "secret_name='evolution-webhook'" in text
+    assert "['evolution-webhook','chatwoot-webhook'].includes(scope)" in code
+    assert 'secret_name=scope' in code
     assert '/webhook/assis/internal/auth/verify' in text
 
 
@@ -51,6 +56,7 @@ def test_internal_auth_verifier_allows_only_explicit_secret_scopes():
     text = json.dumps(workflow)
     assert 'core-internal-agent' in text
     assert 'evolution-webhook' in text
+    assert 'chatwoot-webhook' in text
     assert 'auth secret scope denied' in text
     assert 'name=$2' in text
 
