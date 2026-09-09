@@ -94,10 +94,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir imagem QA.' }
 if ($LASTEXITCODE -ne 0) { throw 'Contrato de bloqueio de acesso a ambiente falhou.' }
 
 Write-Host '6/6 Homologando Core e Evolution com o bloqueio realmente ativo...'
+# Child PowerShell scripts already throw on failure. Do not inspect $LASTEXITCODE
+# after they return because it may contain the exit code of the last native
+# command executed inside the child script even when the child completed with PASS.
 & "$PSScriptRoot\deploy-core-runtime.ps1"
-if ($LASTEXITCODE -ne 0) { throw 'Core Runtime falhou com N8N_BLOCK_ENV_ACCESS_IN_NODE=true.' }
+Write-Host 'PASS: Core Runtime concluiu sem exceção com bloqueio de ambiente.'
 & "$PSScriptRoot\deploy-evolution-inbound.ps1"
-if ($LASTEXITCODE -ne 0) { throw 'Evolution Inbound falhou com N8N_BLOCK_ENV_ACCESS_IN_NODE=true.' }
+Write-Host 'PASS: Evolution Inbound concluiu sem exceção com bloqueio de ambiente.'
 
 $n8n = Get-ComposeContainer 'n8n'
 $blockFinal = (& docker exec $n8n sh -lc 'printf "%s" "${N8N_BLOCK_ENV_ACCESS_IN_NODE:-}"' 2>&1 | Out-String).Trim()
