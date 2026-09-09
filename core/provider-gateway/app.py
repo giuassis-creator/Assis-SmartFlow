@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import urllib.error
 import urllib.parse
@@ -9,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Assis Provider Gateway", version="1.0.0")
+logger = logging.getLogger("assis.provider_gateway")
 
 N8N_INTERNAL_URL = os.getenv("N8N_INTERNAL_URL", "http://n8n:5678").rstrip("/")
 EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
@@ -65,18 +67,37 @@ def _normalized_number(value: str) -> str:
     return digits
 
 
-def _provider_payload(number: str, text: str, delay_ms: int) -> dict:
-    if EVOLUTION_SENDTEXT_PAYLOAD_STYLE == "legacy":
+def _provider_payload(number: str, text: str, delay_ms: int, style: str | None = None) -> dict:
+    style = (style or EVOLUTION_SENDTEXT_PAYLOAD_STYLE).strip().lower()
+    if style == "legacy":
         payload = {"number": number, "textMessage": {"text": text}}
         if delay_ms:
             payload["options"] = {"delay": delay_ms, "presence": "composing"}
         return payload
-    if EVOLUTION_SENDTEXT_PAYLOAD_STYLE != "modern":
+    if style != "modern":
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="invalid Evolution payload style")
     payload = {"number": number, "text": text}
     if delay_ms:
         payload["delay"] = delay_ms
     return payload
+
+
+def _body_text(body: object) -> str:
+    try:
+        return json.dumps(body, ensure_ascii=False).lower()
+    except Exception:
+        return str(body).lower()
+
+
+def _looks_like_modern_payload_schema_failure(status: int, body: object) -> bool:
+    if status not in {400, 422, 500}:
+        return False
+    text = _body_text(body)
+    # Evolution 2.4 RC builds have returned 500 while trying to read textMessage
+    # even when their public DTO accepted {number,text}. This signature indicates
+    # validation/shape failure before a message can be sent, so one legacy retry
+    # is safe and avoids a blind retry on unrelated 5xx responses.
+    return "textmessage" in text and any(token in text for token in ("undefined", "required", "reading", "missing"))
 
 
 @app.get("/healthz")
@@ -100,14 +121,49 @@ def evolution_send_text(
 
     number = _normalized_number(request.to)
     instance = urllib.parse.quote(EVOLUTION_INSTANCE, safe="")
+    endpoint = f"{EVOLUTION_BASE_URL}/message/sendText/{instance}"
+    headers = {"Content-Type": "application/json", "apikey": EVOLUTION_API_KEY}
+    selected_style = EVOLUTION_SENDTEXT_PAYLOAD_STYLE
+
     status, body = _json_request(
-        f"{EVOLUTION_BASE_URL}/message/sendText/{instance}",
-        _provider_payload(number, request.text, request.delay_ms),
-        {"Content-Type": "application/json", "apikey": EVOLUTION_API_KEY},
+        endpoint,
+        _provider_payload(number, request.text, request.delay_ms, selected_style),
+        headers,
         timeout=45.0,
     )
+
+    fallback_used = False
+    if selected_style == "modern" and _looks_like_modern_payload_schema_failure(status, body):
+        logger.warning(
+            "Evolution rejected modern sendText payload with schema signature; retrying once with legacy profile (provider_status=%s response=%s)",
+            status,
+            json.dumps(body, ensure_ascii=False)[:2000],
+        )
+        status, body = _json_request(
+            endpoint,
+            _provider_payload(number, request.text, request.delay_ms, "legacy"),
+            headers,
+            timeout=45.0,
+        )
+        fallback_used = True
+
     if status < 200 or status >= 300:
-        raise HTTPException(status_code=HTTPStatus.BAD_GATEWAY, detail={"provider_status": status, "provider_response": body})
+        logger.error(
+            "Evolution sendText failed provider_status=%s payload_style=%s fallback_used=%s response=%s",
+            status,
+            selected_style,
+            fallback_used,
+            json.dumps(body, ensure_ascii=False)[:4000],
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail={
+                "provider_status": status,
+                "provider_response": body,
+                "payload_style": selected_style,
+                "legacy_fallback_used": fallback_used,
+            },
+        )
 
     message_id = None
     if isinstance(body, dict):
@@ -121,5 +177,7 @@ def evolution_send_text(
         "provider_status": status,
         "provider_message_id": message_id,
         "to": number,
+        "payload_style": "legacy" if fallback_used else selected_style,
+        "legacy_fallback_used": fallback_used,
         "raw": body,
     }
