@@ -35,6 +35,19 @@ function Get-ComposeContainer([string]$Service) {
   return $id
 }
 
+function Get-WahaSession([string]$Session,[hashtable]$Headers) {
+  $url = 'http://127.0.0.1:3000/api/sessions/' + [uri]::EscapeDataString($Session)
+  return Invoke-RestMethod -Uri $url -Headers $Headers -Method Get -TimeoutSec 10
+}
+
+function Restart-WahaSession([string]$Session,[hashtable]$Headers) {
+  $url = 'http://127.0.0.1:3000/api/sessions/' + [uri]::EscapeDataString($Session) + '/restart'
+  $response = Invoke-WebRequest -Uri $url -Headers ($Headers + @{'Content-Type'='application/json'}) -Method Post -Body '{}' -SkipHttpErrorCheck -TimeoutSec 20
+  if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+    throw "Falha ao reiniciar sessão WAHA '$Session' (HTTP $($response.StatusCode))."
+  }
+}
+
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
 
 $session = Read-EnvValue 'WAHA_SESSION'
@@ -95,3 +108,41 @@ Write-Host 'PASS: tenant temporário não será usado no pareamento WhatsApp.'
 
 & "$PSScriptRoot\deploy-waha-provider.ps1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# WAHA intentionally expires QR codes. After the QR refresh budget is exhausted
+# an unpaired session moves to FAILED. Recover that state non-destructively by
+# restarting the session, then immediately persist a fresh QR for the operator.
+$apiKey = Read-EnvValue 'WAHA_API_KEY'
+if ([string]::IsNullOrWhiteSpace($apiKey)) { throw 'WAHA_API_KEY não encontrado no .env.' }
+$headers = @{'X-Api-Key'=$apiKey;Accept='application/json'}
+$state = Get-WahaSession $session $headers
+if ($state.status -eq 'FAILED') {
+  Write-Host "RECOVERY: sessão WAHA '$session' entrou em FAILED; reiniciando para gerar novo ciclo de QR..."
+  Restart-WahaSession $session $headers
+  $deadline = (Get-Date).AddSeconds(45)
+  do {
+    Start-Sleep -Seconds 2
+    $state = Get-WahaSession $session $headers
+    if ($state.status -in @('SCAN_QR_CODE','WORKING','PASSKEY_REQUIRED','PASSKEY_CONFIRMATION_REQUIRED')) { break }
+  } while ((Get-Date) -lt $deadline)
+}
+
+Write-Host "Estado WAHA pós-recuperação: $($state.status)"
+if ($state.status -eq 'SCAN_QR_CODE') {
+  $local = Join-Path $root '.local'
+  New-Item -ItemType Directory -Force -Path $local | Out-Null
+  $qr = Join-Path $local 'waha-qr.png'
+  $qrUrl = 'http://127.0.0.1:3000/api/' + [uri]::EscapeDataString($session) + '/auth/qr'
+  Invoke-WebRequest -Uri $qrUrl -Headers @{'X-Api-Key'=$apiKey;Accept='image/png'} -OutFile $qr -TimeoutSec 15
+  Write-Host "READY: QR WAHA renovado e salvo em: $qr"
+  Write-Host 'Escaneie o QR imediatamente; ele expira e é renovado periodicamente pelo WhatsApp.'
+} elseif ($state.status -eq 'WORKING') {
+  Write-Host 'PASS: sessão WAHA está WORKING.'
+} elseif ($state.status -in @('PASSKEY_REQUIRED','PASSKEY_CONFIRMATION_REQUIRED')) {
+  Write-Host "READY: WAHA exige etapa adicional de passkey ($($state.status)); use o dashboard local para concluir o pareamento."
+} else {
+  $waha = Get-ComposeContainer 'waha'
+  Write-Host '--- logs WAHA (últimas 120 linhas) ---'
+  & docker logs --tail 120 $waha 2>&1 | Out-Host
+  throw "Sessão WAHA permaneceu em estado '$($state.status)' após recuperação."
+}
