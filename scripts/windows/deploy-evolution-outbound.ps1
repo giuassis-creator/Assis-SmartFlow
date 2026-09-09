@@ -12,9 +12,15 @@ $workflowNames = @(
 )
 
 function Get-ComposeContainer([string]$Service) {
-  $out = & docker compose @compose ps -q $Service 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "Falha ao consultar ${Service}:`n$($out -join "`n")" }
-  return (($out | Where-Object { $_ }) -join '').Trim()
+  # docker compose can emit interpolation warnings on stderr. Never merge stderr
+  # into the container ID because that produces an invalid docker exec target.
+  $out = & docker compose @compose ps -q $Service 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "Falha ao consultar ${Service}." }
+  $id = (($out | Where-Object { $_ }) -join '').Trim()
+  if ($id -and $id -notmatch '^[0-9a-f]{12,64}$') {
+    throw "Docker retornou identificador inesperado para ${Service}."
+  }
+  return $id
 }
 
 function Read-EnvValue([string]$Name) {
@@ -25,6 +31,16 @@ function Read-EnvValue([string]$Name) {
     $value = $value.Substring(1,$value.Length-2)
   }
   return $value
+}
+
+function Get-Sha256Hex([string]$Value) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value))
+  } finally {
+    $sha.Dispose()
+  }
+  return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
 }
 
 function Invoke-PgScalar([string]$Sql) {
@@ -90,12 +106,21 @@ if ([string]::IsNullOrWhiteSpace($baseUrl)) { throw 'EVOLUTION_BASE_URL está va
 if ([string]::IsNullOrWhiteSpace($apiKey)) { throw 'EVOLUTION_API_KEY está vazio no .env. Configure localmente; não cole a chave no chat.' }
 if ([string]::IsNullOrWhiteSpace($instance)) { throw 'EVOLUTION_INSTANCE está vazio no .env.' }
 if ($payloadStyle -notin @('modern','legacy')) { throw 'EVOLUTION_SENDTEXT_PAYLOAD_STYLE deve ser modern ou legacy.' }
+
+# Shell environment has higher Compose interpolation precedence than --env-file.
+# This preserves literal '$' characters in provider credentials instead of letting
+# Compose reinterpret fragments such as $TOKEN as variable references.
+$env:EVOLUTION_BASE_URL = $baseUrl
+$env:EVOLUTION_API_KEY = $apiKey
+$env:EVOLUTION_INSTANCE = $instance
+$env:EVOLUTION_SENDTEXT_PAYLOAD_STYLE = $payloadStyle
+$expectedApiKeyHash = Get-Sha256Hex $apiKey
 Write-Host "PASS: configuração Evolution outbound presente (payload_style=$payloadStyle); chave não exibida."
 
 Write-Host '2/7 Construindo e iniciando somente o provider-gateway isolado...'
 & docker compose @compose build provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir provider-gateway.' }
-& docker compose @compose up -d --no-deps provider-gateway | Out-Host
+& docker compose @compose up -d --no-deps --force-recreate provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar provider-gateway.' }
 $deadline = (Get-Date).AddSeconds(90)
 do {
@@ -110,10 +135,14 @@ if ((Get-Date) -ge $deadline) {
   if ($gateway) { & docker logs --tail 120 $gateway 2>&1 | Out-Host }
   throw 'provider-gateway não ficou configurado e saudável em até 90s.'
 }
+$gatewayApiKeyHash = (& docker exec $gateway python -c "import hashlib,os; print(hashlib.sha256(os.environ.get('EVOLUTION_API_KEY','').encode()).hexdigest())" 2>$null | Out-String).Trim()
+if ($gatewayApiKeyHash -ne $expectedApiKeyHash) {
+  throw 'EVOLUTION_API_KEY foi alterada durante interpolação/configuração do Docker Compose. Nenhum envio será realizado.'
+}
 $n8n = Get-ComposeContainer 'n8n'
 $n8nSecretExposure = & docker exec $n8n sh -lc 'if [ -n "${EVOLUTION_API_KEY:-}" ] || [ -n "${EVOLUTION_INSTANCE:-}" ]; then echo PRESENT; else echo ABSENT; fi' 2>&1
 if (($n8nSecretExposure -join '').Trim() -ne 'ABSENT') { throw 'Credenciais Evolution outbound foram expostas ao processo n8n.' }
-Write-Host 'PASS: provider-gateway saudável; EVOLUTION_API_KEY/INSTANCE ausentes do processo n8n.'
+Write-Host 'PASS: provider-gateway saudável; API key preservada literalmente e EVOLUTION_API_KEY/INSTANCE ausentes do processo n8n.'
 
 Write-Host '3/7 Importando somente Policy Gateway e Outbound Text...'
 & "$PSScriptRoot\import-workflows.ps1" -Force -Only $workflowPaths
