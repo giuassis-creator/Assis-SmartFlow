@@ -10,6 +10,29 @@ $sessionUrl='http://127.0.0.1:3000/api/sessions/'+[uri]::EscapeDataString($sessi
 $state=Invoke-RestMethod -Uri $sessionUrl -Headers $headers -TimeoutSec 10
 if($state.engine.engine -ne 'GOWS'){throw "Pareamento por este fluxo exige GOWS; engine atual=$($state.engine.engine)."}
 if($state.status -eq 'WORKING'){Write-Host 'PASS: sessão já está WORKING; nenhum novo pareamento foi solicitado.';exit 0}
+
+if($state.status -eq 'FAILED'){
+  Write-Host "RECOVERY: sessão '$session' está FAILED; reiniciando sem logout e sem apagar dados..."
+  $restartUrl=$sessionUrl+'/restart'
+  $rr=Invoke-WebRequest -Uri $restartUrl -Headers $headers -Method Post -Body '{}' -SkipHttpErrorCheck -TimeoutSec 30
+  if($rr.StatusCode -lt 200 -or $rr.StatusCode -ge 300){throw "Falha ao reiniciar sessão (HTTP $($rr.StatusCode)): $($rr.Content)"}
+  $deadline=(Get-Date).AddSeconds(60)
+  do{
+    Start-Sleep 2
+    $state=Invoke-RestMethod -Uri $sessionUrl -Headers $headers -TimeoutSec 10
+    Write-Host "Estado pós-restart: $($state.status)"
+    if($state.status -in @('SCAN_QR_CODE','WORKING','PASSKEY_REQUIRED','PASSKEY_CONFIRMATION_REQUIRED')){break}
+    if($state.status -eq 'FAILED' -and (Get-Date) -gt $deadline.AddSeconds(-40)){break}
+  }while((Get-Date)-lt $deadline)
+}
+
+if($state.status -eq 'WORKING'){Write-Host 'PASS: sessão ficou WORKING durante a recuperação.';exit 0}
+if($state.status -eq 'PASSKEY_REQUIRED'){Write-Host 'READY: sessão exige passkey/WebAuthn antes do código.';exit 0}
+if($state.status -eq 'PASSKEY_CONFIRMATION_REQUIRED'){Write-Host 'READY: sessão exige confirmação de passkey.';exit 0}
+if($state.status -ne 'SCAN_QR_CODE'){
+  throw "Não é seguro solicitar código no estado '$($state.status)'. Nenhum logout ou exclusão foi executado."
+}
+
 $url='http://127.0.0.1:3000/api/'+[uri]::EscapeDataString($session)+'/auth/request-code'
 $body=@{phoneNumber=$PhoneNumber}|ConvertTo-Json -Compress
 $r=Invoke-WebRequest -Uri $url -Headers $headers -Method Post -Body $body -SkipHttpErrorCheck -TimeoutSec 30
