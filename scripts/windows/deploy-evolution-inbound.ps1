@@ -137,7 +137,7 @@ Write-Host 'PASS: EVOLUTION_WEBHOOK_SECRET ausente do ambiente do processo n8n.'
 Write-Host '5/6 Validando contratos estáticos da autenticação escopada...'
 & docker compose @compose --profile tools build qa | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir imagem QA.' }
-& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py tests/test_canonical_ingress_security.py -p no:cacheprovider | Out-Host
+& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py core/qa/tests/test_internal_endpoint_auth.py -p no:cacheprovider | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha nos testes estáticos da fronteira Evolution/Canonical.' }
 
 Write-Host '6/6 Homologando webhook público -> hash PostgreSQL -> Canonical Ingress...'
