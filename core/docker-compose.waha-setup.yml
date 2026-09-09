@@ -1,0 +1,7 @@
+services:
+  waha:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+# Pairing-only override for local Docker Desktop setup.
+# Production/VPS deployments should omit this file and keep WAHA on the internal network.
