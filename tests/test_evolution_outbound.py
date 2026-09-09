@@ -49,3 +49,13 @@ def test_provider_gateway_revalidates_internal_auth_and_supports_explicit_payloa
     assert '"text": text' in app
     assert '/message/sendText/' in app
     assert '"apikey": EVOLUTION_API_KEY' in app
+
+
+def test_provider_gateway_only_retries_legacy_on_specific_textmessage_schema_failure():
+    app = (ROOT / 'core/provider-gateway/app.py').read_text(encoding='utf-8')
+    assert '_looks_like_modern_payload_schema_failure' in app
+    assert 'status not in {400, 422, 500}' in app
+    assert '"textmessage" in text' in app
+    assert 'retrying once with legacy profile' in app
+    assert 'legacy_fallback_used' in app
+    assert 'Evolution sendText failed provider_status=' in app
