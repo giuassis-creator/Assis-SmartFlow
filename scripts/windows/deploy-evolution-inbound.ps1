@@ -2,8 +2,16 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml')
-$workflowPath = 'starter/workflows/01-evolution-inbound.json'
-$workflowName = 'Starter 01 Evolution Inbound'
+$workflowPaths = @(
+  'library/agents/11-internal-auth-verify.json',
+  'library/workflows/01-canonical-ingress.json',
+  'starter/workflows/01-evolution-inbound.json'
+)
+$workflowNames = @(
+  'Internal Auth Verify',
+  '01 Canonical Ingress',
+  'Starter 01 Evolution Inbound'
+)
 
 function Get-ComposeContainer([string]$Service) {
   $out = & docker compose @compose ps -q $Service 2>&1
@@ -34,10 +42,28 @@ function Set-EnvValue([string]$Name,[string]$Value) {
   Set-Content -Path .env -Value $updated -Encoding utf8
 }
 
+function Get-Sha256Hex([string]$Value) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value))
+  } finally {
+    $sha.Dispose()
+  }
+  return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
+}
+
+function Invoke-PgScalar([string]$Sql) {
+  $postgres = Get-ComposeContainer 'postgres'
+  if (-not $postgres) { throw 'Container PostgreSQL não encontrado.' }
+  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
+  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
+  return (($out | Where-Object { $_ }) -join '').Trim()
+}
+
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
 
-Write-Host '=== Assis SmartFlow Evolution Inbound ==='
-Write-Host '1/5 Garantindo segredo forte do webhook Evolution...'
+Write-Host '=== Assis SmartFlow Evolution Inbound - Hashed Provider Auth ==='
+Write-Host '1/6 Garantindo segredo forte do webhook Evolution e registrando somente o hash...'
 $secret = Read-EnvValue 'EVOLUTION_WEBHOOK_SECRET'
 if ([string]::IsNullOrWhiteSpace($secret) -or $secret -eq 'CHANGE_ME_LONG_RANDOM_EVOLUTION_SECRET' -or $secret.Length -lt 32) {
   $bytes = New-Object byte[] 32
@@ -49,34 +75,49 @@ if ([string]::IsNullOrWhiteSpace($secret) -or $secret -eq 'CHANGE_ME_LONG_RANDOM
   Write-Host 'PASS: segredo Evolution existente preservado.'
 }
 
-Write-Host '2/5 Importando somente o adapter Evolution...'
-& "$PSScriptRoot\import-workflows.ps1" -Force -Only @($workflowPath)
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflow Evolution.' }
-
 $postgres = Get-ComposeContainer 'postgres'
 $n8n = Get-ComposeContainer 'n8n'
 if (-not $postgres -or -not $n8n) { throw 'PostgreSQL ou n8n indisponível.' }
-
-$escapedName = $workflowName.Replace("'","''")
-$sql = @"
-SELECT id
-FROM workflow_entity
-WHERE name='$escapedName'
-ORDER BY "updatedAt" DESC
-LIMIT 1;
+$secretHash = Get-Sha256Hex $secret
+$hashSql = @"
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE IF NOT EXISTS internal_auth_secrets (
+  name text PRIMARY KEY,
+  token_sha256 text NOT NULL CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO internal_auth_secrets(name,token_sha256,updated_at)
+VALUES ('evolution-webhook','$secretHash',CURRENT_TIMESTAMP)
+ON CONFLICT(name)
+DO UPDATE SET token_sha256=EXCLUDED.token_sha256,updated_at=CURRENT_TIMESTAMP;
 "@
-$workflowId = (& docker exec --env "ASSIS_SQL=$sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
-$workflowId = $workflowId.Trim()
-if ([string]::IsNullOrWhiteSpace($workflowId)) { throw 'Workflow Evolution importado não foi localizado no banco do n8n.' }
+& docker exec --env "ASSIS_SQL=$hashSql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$ASSIS_SQL"' | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao registrar hash do segredo Evolution.' }
+Write-Host 'PASS: PostgreSQL contém somente o SHA-256 do segredo Evolution.'
 
-Write-Host '3/5 Publicando adapter e recarregando o n8n com o segredo atualizado...'
-$publish = & docker exec -u node $n8n n8n publish:workflow --id=$workflowId 2>&1
-if ($LASTEXITCODE -ne 0 -or (($publish -join "`n") -match '(?i)error|failed|not found')) {
-  throw "Falha ao publicar workflow Evolution:`n$($publish -join "`n")"
+Write-Host '2/6 Importando somente verifier, Canonical Ingress e adapter Evolution...'
+& "$PSScriptRoot\import-workflows.ps1" -Force -Only $workflowPaths
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao importar workflows da fronteira Evolution.' }
+& "$PSScriptRoot\bind-postgres-workflow-credentials.ps1"
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao vincular credencial PostgreSQL.' }
+
+Write-Host '3/6 Publicando somente os workflows desta fronteira...'
+foreach ($name in $workflowNames) {
+  $escaped = $name.Replace("'","''")
+  $id = Invoke-PgScalar @"
+SELECT id FROM workflow_entity WHERE name='$escaped' ORDER BY "updatedAt" DESC LIMIT 1;
+"@
+  if ([string]::IsNullOrWhiteSpace($id)) { throw "Workflow '$name' não localizado no banco do n8n." }
+  $publish = & docker exec -u node $n8n n8n publish:workflow --id=$id 2>&1
+  if ($LASTEXITCODE -ne 0 -or (($publish -join "`n") -match '(?i)error|failed|not found')) {
+    throw "Falha ao publicar '$name':`n$($publish -join "`n")"
+  }
+  Write-Host "  PASS: $name publicado."
 }
-& docker compose @compose up -d --no-deps --force-recreate n8n | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao recriar somente o n8n com EVOLUTION_WEBHOOK_SECRET.' }
 
+Write-Host '4/6 Recriando somente o n8n sem expor EVOLUTION_WEBHOOK_SECRET ao processo...'
+& docker compose @compose up -d --no-deps --force-recreate n8n | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao recriar somente o n8n.' }
 $deadline = (Get-Date).AddSeconds(120)
 do {
   $n8n = Get-ComposeContainer 'n8n'
@@ -89,13 +130,17 @@ do {
 if ((Get-Date) -ge $deadline) { throw 'n8n não ficou pronto em até 120s.' }
 Start-Sleep -Seconds 3
 
-Write-Host '4/5 Validando contrato estático do adapter Evolution...'
+$envCheck = & docker exec $n8n sh -lc 'if [ -n "${EVOLUTION_WEBHOOK_SECRET:-}" ]; then echo PRESENT; else echo ABSENT; fi' 2>&1
+if (($envCheck -join '').Trim() -ne 'ABSENT') { throw 'EVOLUTION_WEBHOOK_SECRET ainda está exposto no ambiente do n8n.' }
+Write-Host 'PASS: EVOLUTION_WEBHOOK_SECRET ausente do ambiente do processo n8n.'
+
+Write-Host '5/6 Validando contratos estáticos da autenticação escopada...'
 & docker compose @compose --profile tools build qa | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir imagem QA.' }
-& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py -p no:cacheprovider | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Falha nos testes estáticos do adapter Evolution.' }
+& docker compose @compose --profile tools run --rm qa pytest -q tests/test_evolution_adapter_security.py tests/test_canonical_ingress_security.py -p no:cacheprovider | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Falha nos testes estáticos da fronteira Evolution/Canonical.' }
 
-Write-Host '5/5 Homologando fronteira pública Evolution -> Canonical Ingress...'
+Write-Host '6/6 Homologando webhook público -> hash PostgreSQL -> Canonical Ingress...'
 $marker = [guid]::NewGuid().ToString('N')
 $slug = "evolution-smoke-$marker"
 $remote = "55119999$($marker.Substring(0,4))@s.whatsapp.net"
@@ -105,8 +150,7 @@ INSERT INTO organizations(slug,name,config)
 VALUES('$slug','Evolution Smoke','{"smoke_test":true}'::jsonb)
 RETURNING id;
 "@
-$orgId = (& docker exec --env "ASSIS_SQL=$insertOrg" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
-$orgId = $orgId.Trim()
+$orgId = Invoke-PgScalar $insertOrg
 if ([string]::IsNullOrWhiteSpace($orgId)) { throw 'Não foi possível criar organização temporária para smoke Evolution.' }
 
 try {
@@ -125,8 +169,8 @@ try {
     $goodBody = if (Test-Path $goodOut) { (Get-Content $goodOut -Raw).Trim() } else { '' }
     Write-Host '--- corpo da resposta Evolution válida ---'
     if ($goodBody) { Write-Host $goodBody } else { Write-Host '(vazio)' }
-    Write-Host '--- últimas 120 linhas do log n8n ---'
-    & docker logs --tail 120 $n8n 2>&1 | Out-Host
+    Write-Host '--- últimas 140 linhas do log n8n ---'
+    & docker logs --tail 140 $n8n 2>&1 | Out-Host
     throw "Adapter Evolution válido retornou HTTP $goodStatus. Diagnóstico acima."
   }
 
@@ -139,18 +183,20 @@ WHERE o.slug='$slug'
   AND m.provider_message_id='$msgId'
   AND m.body='Mensagem de homologação Evolution';
 "@
-  $count = (& docker exec --env "ASSIS_SQL=$verifySql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1 | Where-Object { $_ }) -join ''
-  if ([int]$count.Trim() -ne 1) { throw 'Mensagem Evolution não chegou ao Canonical Ingress/PostgreSQL.' }
-  Write-Host 'PASS: Evolution autenticado atravessou o adapter e foi persistido pelo Canonical Ingress.'
+  $count = Invoke-PgScalar $verifySql
+  if ([int]$count -ne 1) { throw 'Mensagem Evolution não chegou ao Canonical Ingress/PostgreSQL.' }
+  Write-Host 'PASS: Evolution autenticado por hash atravessou o adapter e foi persistido pelo Canonical Ingress.'
 } finally {
   Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-$marker.json")
   Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-bad-$marker.txt")
   Remove-Item -ErrorAction SilentlyContinue (Join-Path $env:TEMP "assis-evolution-good-$marker.txt")
-  $cleanupSql = "DELETE FROM organizations WHERE id='$orgId'::uuid;"
-  & docker exec --env "ASSIS_SQL=$cleanupSql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$ASSIS_SQL"' *> $null
+  if ($orgId) {
+    $cleanupSql = "DELETE FROM organizations WHERE id='$orgId'::uuid;"
+    & docker exec --env "ASSIS_SQL=$cleanupSql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$ASSIS_SQL"' *> $null
+  }
 }
 
 Write-Host ''
-Write-Host 'PASS: adapter Evolution Inbound endurecido e homologado.'
-Write-Host 'Fluxo validado: webhook público autenticado -> normalização Evolution -> Canonical Ingress interno autenticado -> PostgreSQL.'
-Write-Host 'Configure o mesmo EVOLUTION_WEBHOOK_SECRET no provedor Evolution usando o header x-assis-secret.'
+Write-Host 'PASS: adapter Evolution Inbound sem acesso a $env implantado e homologado.'
+Write-Host 'Fluxo: segredo bruto somente no .env do host/provedor -> hash PostgreSQL -> verifier escopado -> adapter -> Canonical Ingress -> PostgreSQL.'
+Write-Host 'O segredo Evolution não é mais injetado no ambiente do processo n8n.'
