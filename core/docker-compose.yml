@@ -86,6 +86,35 @@ services:
       - ../mcp:/opt/assis/mcp:ro
     networks: [frontend, backend]
 
+  waha:
+    image: devlikeapro/waha:${WAHA_VERSION:-2026.8.2}
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_API_KEY_PLAIN: ${WAHA_API_KEY:-}
+      WHATSAPP_DEFAULT_ENGINE: ${WAHA_ENGINE:-GOWS}
+      WAHA_NAMESPACE: all
+      WAHA_DASHBOARD_ENABLED: ${WAHA_DASHBOARD_ENABLED:-true}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-}
+      WHATSAPP_SWAGGER_ENABLED: ${WAHA_SWAGGER_ENABLED:-false}
+      WAHA_LOG_FORMAT: JSON
+      WAHA_LOG_LEVEL: ${WAHA_LOG_LEVEL:-info}
+      WAHA_PRINT_QR: ${WAHA_PRINT_QR:-false}
+      WHATSAPP_HOOK_URL: http://n8n:5678/webhook/adapter/waha/in
+      WHATSAPP_HOOK_EVENTS: session.status,message
+      WHATSAPP_HOOK_CUSTOM_HEADERS: X-Assis-Secret:${WAHA_WEBHOOK_SECRET:-}
+      WHATSAPP_HOOK_RETRIES_ATTEMPTS: ${WAHA_WEBHOOK_RETRIES:-4}
+    volumes:
+      - waha_sessions:/app/.sessions
+      - waha_media:/app/.media
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/sessions',{headers:{'X-Api-Key':process.env.WAHA_API_KEY}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"" ]
+      interval: 15s
+      timeout: 8s
+      retries: 20
+    networks: [backend, ai_egress]
+
   provider-gateway:
     build:
       context: ./provider-gateway
@@ -94,6 +123,9 @@ services:
       n8n: {condition: service_started}
     environment:
       N8N_INTERNAL_URL: http://n8n:5678
+      WHATSAPP_PROVIDER_DEFAULT: ${WHATSAPP_PROVIDER_DEFAULT:-waha}
+      WAHA_BASE_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
       EVOLUTION_BASE_URL: ${EVOLUTION_BASE_URL:-}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-}
@@ -201,3 +233,5 @@ volumes:
   ollama_data: {}
   whisper_cache: {}
   kokoro_cache: {}
+  waha_sessions: {}
+  waha_media: {}
