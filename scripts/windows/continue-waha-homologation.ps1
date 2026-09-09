@@ -131,10 +131,15 @@ Write-Host "Estado WAHA pós-recuperação: $($state.status)"
 if ($state.status -eq 'SCAN_QR_CODE') {
   $local = Join-Path $root '.local'
   New-Item -ItemType Directory -Force -Path $local | Out-Null
-  $qr = Join-Path $local 'waha-qr.png'
+  # Never overwrite a QR file that may still be open in Windows Photos/Explorer.
+  # Windows can hold a mapped section on the PNG and reject in-place replacement.
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+  $qr = Join-Path $local "waha-qr-$stamp.png"
   $qrUrl = 'http://127.0.0.1:3000/api/' + [uri]::EscapeDataString($session) + '/auth/qr'
   Invoke-WebRequest -Uri $qrUrl -Headers @{'X-Api-Key'=$apiKey;Accept='image/png'} -OutFile $qr -TimeoutSec 15
+  Set-Content -Path (Join-Path $local 'waha-qr-latest.txt') -Value $qr -Encoding utf8
   Write-Host "READY: QR WAHA renovado e salvo em: $qr"
+  Write-Host "INFO: caminho do QR atual também registrado em: $(Join-Path $local 'waha-qr-latest.txt')"
   Write-Host 'Escaneie o QR imediatamente; ele expira e é renovado periodicamente pelo WhatsApp.'
 } elseif ($state.status -eq 'WORKING') {
   Write-Host 'PASS: sessão WAHA está WORKING.'
