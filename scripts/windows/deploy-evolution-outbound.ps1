@@ -51,6 +51,32 @@ fetch('http://127.0.0.1:5678'+path,{method:'POST',headers:{'content-type':'appli
   return (($out | Where-Object { $_ }) -join "`n").Trim()
 }
 
+function Wait-N8nWebhook([string]$Path,[int]$TimeoutSeconds=120) {
+  $probeBody = @{organization_id='00000000-0000-0000-0000-000000000001';conversation_id='00000000-0000-0000-0000-000000000002';idempotency_key='readiness-probe';to='5511999999999';text='readiness'} | ConvertTo-Json -Compress
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $attempt = 0
+  do {
+    $attempt++
+    try {
+      $probe = Invoke-N8nPost $Path 'invalid-readiness-token' $probeBody
+      $status = ($probe -split '\|',2)[0].Trim()
+      if ($status -and $status -ne '404') {
+        Write-Host "PASS: rota outbound registrada após $attempt tentativa(s) (probe HTTP $status)."
+        return
+      }
+    } catch {
+      # n8n may still be starting; retry until the deadline.
+    }
+    Start-Sleep -Seconds 3
+  } while ((Get-Date) -lt $deadline)
+  $n8n = Get-ComposeContainer 'n8n'
+  if ($n8n) {
+    Write-Host '--- logs n8n (últimas 180 linhas) ---'
+    & docker logs --tail 180 $n8n 2>&1 | Out-Host
+  }
+  throw "Webhook '$Path' não foi registrado em até ${TimeoutSeconds}s."
+}
+
 if (-not (Test-Path .env)) { throw '.env não encontrado.' }
 
 Write-Host '=== Assis SmartFlow Evolution Outbound - Isolated Provider Gateway ==='
@@ -110,7 +136,8 @@ SELECT id FROM workflow_entity WHERE name='$escaped' ORDER BY "updatedAt" DESC L
 }
 & docker compose @compose restart n8n | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao reiniciar n8n para registrar rota outbound.' }
-Start-Sleep -Seconds 8
+Write-Host 'Aguardando registro da rota outbound de produção no n8n...'
+Wait-N8nWebhook '/webhook/assis/internal/message/send-text' 120
 
 Write-Host '5/7 Validando contratos estáticos e isolamento de credenciais...'
 & docker compose @compose --profile tools build qa | Out-Host
@@ -122,7 +149,7 @@ Write-Host '6/7 Homologando rejeição de chamada interna não autenticada...'
 $dummy = @{organization_id='00000000-0000-0000-0000-000000000001';conversation_id='00000000-0000-0000-0000-000000000002';idempotency_key='invalid-auth-smoke';to='5511999999999';text='invalid'} | ConvertTo-Json -Compress
 $bad = Invoke-N8nPost '/webhook/assis/internal/message/send-text' 'invalid-outbound-token' $dummy
 $badStatus = ($bad -split '\|',2)[0].Trim()
-if ($badStatus -eq '200') { throw 'Outbound Text aceitou token interno inválido.' }
+if ($badStatus -eq '200' -or $badStatus -eq '404') { throw "Outbound Text não demonstrou rejeição autenticada válida (HTTP $badStatus)." }
 Write-Host "PASS: Outbound Text rejeitou token inválido (HTTP $badStatus)."
 
 Write-Host '7/7 Homologação funcional do provider...'
