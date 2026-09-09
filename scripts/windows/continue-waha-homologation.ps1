@@ -71,7 +71,7 @@ fetch('http://127.0.0.1:5678/webhook/adapter/waha/in',{
   if ($LASTEXITCODE -ne 0) { throw "Falha ao testar webhook WAHA:`n$($out -join "`n")" }
   $text = (($out | Where-Object { $_ }) -join "`n").Trim()
   $status = ($text -split '\|',2)[0].Trim()
-  if ($status -ne '200') { throw "Webhook WAHA lifecycle retornou HTTP $status: $text" }
+  if ($status -ne '200') { throw "Webhook WAHA lifecycle retornou HTTP ${status}: $text" }
   Write-Host 'PASS: webhook WAHA lifecycle autenticado responde HTTP 200 sem encaminhar evento não-mensagem.'
 }
 
