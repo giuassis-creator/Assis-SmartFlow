@@ -2,7 +2,7 @@ import json
 import os
 import sys
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import psycopg
@@ -37,6 +37,38 @@ def post(path, payload, timeout=180):
     except HTTPError as exc:
         raw = exc.read().decode('utf-8', errors='replace')
         raise RuntimeError(f'{path} HTTP {exc.code}: {raw}') from exc
+
+
+def wait_for_registered_webhook(path, timeout=120):
+    deadline = time.time() + timeout
+    attempt = 0
+    last_error = None
+    while time.time() < deadline:
+        attempt += 1
+        req = Request(
+            BASE + path,
+            data=b'{}',
+            headers={
+                'Content-Type': 'application/json',
+                'x-assis-internal-token': 'invalid-readiness-probe',
+            },
+            method='POST',
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                resp.read()
+                print(f'Webhook {path} registered after {attempt} attempt(s).')
+                return
+        except HTTPError as exc:
+            body = exc.read().decode('utf-8', errors='replace')
+            if exc.code != 404 or 'not registered' not in body.lower():
+                print(f'Webhook {path} registered after {attempt} attempt(s).')
+                return
+            last_error = f'HTTP {exc.code}: {body}'
+        except URLError as exc:
+            last_error = str(exc)
+        time.sleep(2)
+    raise RuntimeError(f'Webhook {path} was not registered within {timeout}s: {last_error}')
 
 
 def pg_connect():
@@ -79,6 +111,11 @@ def cleanup(org_id):
 
 def main():
     require(TOKEN, 'INTERNAL_AGENT_TOKEN unavailable')
+
+    print('Waiting for long-term memory production webhooks...')
+    wait_for_registered_webhook('/webhook/internal/context')
+    wait_for_registered_webhook('/webhook/internal/memory/write')
+
     marker = f'LONGMEM_{int(time.time())}'
     org_id = None
     try:
