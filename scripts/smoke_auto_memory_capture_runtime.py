@@ -15,6 +15,10 @@ PG_USER = os.getenv('POSTGRES_USER', '')
 PG_PASSWORD = os.getenv('POSTGRES_PASSWORD', '')
 
 
+def log(message):
+    print(message, flush=True)
+
+
 def require(cond, message):
     if not cond:
         raise RuntimeError(message)
@@ -37,6 +41,8 @@ def post(path, payload, timeout=180):
     except HTTPError as exc:
         raw = exc.read().decode('utf-8', errors='replace')
         raise RuntimeError(f'{path} HTTP {exc.code}: {raw}') from exc
+    except URLError as exc:
+        raise RuntimeError(f'{path} unreachable: {exc}') from exc
 
 
 def wait_for_registered_webhook(path, timeout=120):
@@ -57,12 +63,12 @@ def wait_for_registered_webhook(path, timeout=120):
         try:
             with urlopen(req, timeout=10) as resp:
                 resp.read()
-                print(f'Webhook {path} registered after {attempt} attempt(s).')
+                log(f'Webhook {path} registered after {attempt} attempt(s).')
                 return
         except HTTPError as exc:
             body = exc.read().decode('utf-8', errors='replace')
             if exc.code != 404 or 'not registered' not in body.lower():
-                print(f'Webhook {path} registered after {attempt} attempt(s).')
+                log(f'Webhook {path} registered after {attempt} attempt(s).')
                 return
             last_error = f'HTTP {exc.code}: {body}'
         except URLError as exc:
@@ -119,7 +125,7 @@ def count_long_term(contact_id):
 def main():
     require(TOKEN, 'INTERNAL_AGENT_TOKEN unavailable')
 
-    print('Waiting for automatic-memory production webhooks...')
+    log('Waiting for automatic-memory production webhooks...')
     for path in (
         '/webhook/internal/context',
         '/webhook/internal/memory/write',
@@ -130,10 +136,12 @@ def main():
 
     marker = f'AUTOMEM_{int(time.time())}'
     org_id = None
+    stage = 'fixture'
     try:
         org_id, contact_id, first_conversation, second_conversation = create_fixture(marker)
 
-        print('Restricted explicit secret is not captured...')
+        stage = 'restricted prefilter'
+        log('Restricted explicit secret is not captured...')
         before = count_long_term(contact_id)
         status, blocked = post('/webhook/internal/memory/auto-capture', {
             'conversation_id': first_conversation,
@@ -143,8 +151,49 @@ def main():
         require(blocked.get('captured') is False, f'Restricted secret was captured: {blocked!r}')
         require(count_long_term(contact_id) == before, 'Restricted secret changed long-term memory')
 
-        print('Maya automatically captures an explicit durable preference...')
+        stage = 'long-term-only memory write'
+        log('Validating long-term-only Memory Write before automatic classification...')
+        probe_key = f'probe_{marker.lower()}'
+        status, probe = post('/webhook/internal/memory/write', {
+            'conversation_id': first_conversation,
+            'write_short_term': False,
+            'long_term': True,
+            'category': 'preference',
+            'memory_key': probe_key,
+            'memory_value': {'value': marker, 'source': 'runtime_probe'},
+            'confidence': 1,
+        })
+        require(status == 200 and isinstance(probe, dict), f'Unexpected long-term-only write response: {probe!r}')
+        require(bool(probe.get('long_term')), f'Long-term-only write did not persist: {probe!r}')
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'DELETE FROM long_term_memory WHERE organization_id=%s::uuid AND contact_id=%s::uuid AND memory_key=%s',
+                    (org_id, contact_id, f'preference:{probe_key}'),
+                )
+            conn.commit()
+
+        stage = 'direct automatic capture'
+        log('Validating automatic classifier and persistence directly...')
         statement = f'Guarde como preferência que meu código de contato preferido é {marker}.'
+        status, direct = post('/webhook/internal/memory/auto-capture', {
+            'conversation_id': first_conversation,
+            'text': statement,
+        }, timeout=300)
+        require(status == 200 and isinstance(direct, dict), f'Unexpected direct automatic capture response: {direct!r}')
+        require(direct.get('captured') is True, f'Direct automatic capture did not store the explicit preference: {direct!r}')
+
+        # Remove the direct probe so the following Maya turn must prove its own integrated capture.
+        with pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'DELETE FROM long_term_memory WHERE organization_id=%s::uuid AND contact_id=%s::uuid',
+                    (org_id, contact_id),
+                )
+            conn.commit()
+
+        stage = 'Maya integrated capture'
+        log('Maya automatically captures an explicit durable preference...')
         status, first = post('/webhook/assis/v1/maya/orchestrate', {
             'text': statement,
             'conversation_id': first_conversation,
@@ -164,7 +213,8 @@ def main():
                 require(row is not None, 'Automatic durable memory row not found')
                 require(marker.casefold() in str(row[1] or '').casefold(), f'Automatic durable value does not preserve user evidence: {row!r}')
 
-        print('A new conversation loads and recalls the automatically captured fact...')
+        stage = 'cross-conversation context'
+        log('A new conversation loads and recalls the automatically captured fact...')
         status, context = post('/webhook/internal/context', {
             'conversation_id': second_conversation,
             'max_messages': 20,
@@ -172,6 +222,7 @@ def main():
         require(status == 200 and isinstance(context, dict), f'Unexpected second-conversation context: {context!r}')
         require(marker.casefold() in str(context.get('summary') or '').casefold(), f'Automatic durable fact missing from second-conversation context: {context!r}')
 
+        stage = 'Maya cross-conversation recall'
         status, second = post('/webhook/assis/v1/maya/orchestrate', {
             'text': 'Qual é meu código de contato preferido? Responda apenas com o código.',
             'conversation_id': second_conversation,
@@ -181,7 +232,9 @@ def main():
         require(second.get('context_loaded') is True, f'Maya did not load second conversation: {second!r}')
         require(marker.casefold() in str(second.get('response') or '').casefold(), f'Maya did not recall automatically captured durable fact: {second!r}')
 
-        print('PASS: Maya automatically captures explicit durable facts, blocks restricted data, and recalls accepted facts across conversations.')
+        log('PASS: Maya automatically captures explicit durable facts, blocks restricted data, and recalls accepted facts across conversations.')
+    except Exception as exc:
+        raise RuntimeError(f'AUTO_MEMORY_STAGE={stage}: {exc}') from exc
     finally:
         cleanup(org_id)
 
@@ -190,5 +243,5 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exc:
-        print(f'FAIL: {exc}', file=sys.stderr)
+        print(f'FAIL: {exc}', file=sys.stderr, flush=True)
         sys.exit(1)
