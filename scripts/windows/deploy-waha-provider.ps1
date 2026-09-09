@@ -186,7 +186,14 @@ Write-Host '5/8 Publicando workflows e aguardando rotas...'
 $n8n=Get-ComposeContainer 'n8n'
 foreach($name in $workflowNames){
   $escaped=$name.Replace("'","''")
-  $id=Invoke-PgScalar "SELECT id FROM workflow_entity WHERE name='$escaped' ORDER BY \"updatedAt\" DESC LIMIT 1;"
+  $lookupSql = @"
+SELECT id
+FROM workflow_entity
+WHERE name='$escaped'
+ORDER BY "updatedAt" DESC
+LIMIT 1;
+"@
+  $id=Invoke-PgScalar $lookupSql
   if([string]::IsNullOrWhiteSpace($id)){throw "Workflow '$name' não localizado."}
   $publish=& docker exec -u node $n8n n8n publish:workflow --id=$id 2>&1
   if($LASTEXITCODE -ne 0 -or (($publish -join "`n") -match '(?i)error|failed|not found')){throw "Falha ao publicar '$name':`n$($publish -join "`n")"}
@@ -245,12 +252,11 @@ try{
   $body=@{organization_id=$orgId;conversation_id=$conversationId;idempotency_key=$idem;to=$testNumber;text="Homologação Assis SmartFlow WAHA $marker";channel='whatsapp'}|ConvertTo-Json -Compress
   $good=Invoke-N8nPost '/webhook/assis/internal/message/send-text' $internalToken $body
   $status=($good -split '\|',2)[0].Trim();if($status -ne '200'){throw "Outbound WAHA válido retornou HTTP $status."}
-  Start-Sleep -Seconds 2
-  $verify=Invoke-PgScalar "SELECT (SELECT count(*) FROM messages WHERE organization_id='$orgId'::uuid AND idempotency_key='$idem' AND direction='out')::text||'|'||(SELECT count(*) FROM tool_idempotency WHERE organization_id='$orgId'::uuid AND operation='message.send_text' AND idempotency_key='$idem' AND status='completed')::text;"
-  if($verify -ne '1|1'){throw "Persistência/idempotência WAHA inesperada: $verify"}
-  Write-Host 'PASS: mensagem real enviada via WAHA, persistida uma vez e idempotência marcada como completed.'
+  $count=Invoke-PgScalar "SELECT count(*) FROM messages WHERE organization_id='$orgId'::uuid AND idempotency_key='$idem';"
+  if($count -ne '1'){throw "Persistência outbound inesperada: $count registro(s)."}
+  $again=Invoke-N8nPost '/webhook/assis/internal/message/send-text' $internalToken $body
+  $againStatus=($again -split '\|',2)[0].Trim();if($againStatus -eq '200'){throw 'Idempotência falhou: segunda chamada foi aceita.'}
+  Write-Host 'PASS: WAHA outbound real, persistência e idempotência homologados.'
 } finally {
-  try { Invoke-PgScalar "DELETE FROM organizations WHERE id='$orgId'::uuid;" | Out-Null } catch { Write-Warning 'Não foi possível remover automaticamente a organização temporária de smoke.' }
+  Invoke-PgScalar "DELETE FROM organizations WHERE slug='$slug';" | Out-Null
 }
-Write-Host ''
-Write-Host 'PASS: WAHA multi-tenant implantado e homologado E2E.'
