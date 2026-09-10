@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execução Focada"
+  short_description: "Mantenha simplicidade, escopo e verificação dupla"
+  default_prompt: "Use $focused-task-execution para executar esta tarefa sem ampliar o escopo e verificá-la duas vezes."
