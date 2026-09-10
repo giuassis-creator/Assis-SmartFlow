@@ -42,7 +42,10 @@ Write-Host '=== Diagnóstico preciso de autenticação do Outbound Text ==='
 $verifyBody=@{token=$token;secret_name='core-internal-agent'}|ConvertTo-Json -Compress
 $verify=Invoke-N8n '/webhook/assis/internal/auth/verify' $token $verifyBody $false
 Write-Host "Verifier direto: $verify"
+if ($verify -notmatch '^200\|.*"valid"\s*:\s*true') { throw 'Verifier direto não aceitou o token atual.' }
 
+$n8n=Get-ComposeContainer 'n8n'
+$startedAt = (Get-Date).AddSeconds(-2).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 $probe=@{
   organization_id='00000000-0000-0000-0000-000000000000'
   conversation_id='00000000-0000-0000-0000-000000000000'
@@ -53,9 +56,24 @@ $probe=@{
 }|ConvertTo-Json -Compress
 $outbound=Invoke-N8n '/webhook/assis/internal/message/send-text' $token $probe $true
 Write-Host "Outbound probe: $outbound"
+Start-Sleep -Milliseconds 600
 
-$n8n=Get-ComposeContainer 'n8n'
-Write-Host '--- logs recentes relacionados a unauthorized outbound text call ---'
-$logs=& docker logs --tail 300 $n8n 2>&1 | Select-String -Pattern 'unauthorized outbound text call|Starter 06 Outbound Text|Verify Internal Auth|Enforce Internal Auth|Error in workflow'
-if($logs){$logs|ForEach-Object{Write-Host $_.Line}}else{Write-Host 'INFO: nenhum log correspondente encontrado.'}
+Write-Host '--- logs desta execução do probe ---'
+$recent = @(& docker logs --since $startedAt $n8n 2>&1)
+$relevant = $recent | Select-String -Pattern 'Starter 06 Outbound Text|unauthorized outbound text call|no enabled WhatsApp provider route for organization|duplicate idempotency key|Error in workflow|Error:'
+if($relevant){$relevant|ForEach-Object{Write-Host $_.Line}}else{Write-Host 'INFO: nenhum log detalhado correspondente encontrado nesta janela.'}
+
+$unauthorizedCurrent = @($recent | Select-String -Pattern 'unauthorized outbound text call').Count -gt 0
+$routeMissCurrent = @($recent | Select-String -Pattern 'no enabled WhatsApp provider route for organization').Count -gt 0
+if ($unauthorizedCurrent) {
+  throw 'FALHA: a execução atual ainda foi rejeitada na autenticação interna.'
+}
+if ($routeMissCurrent) {
+  Write-Host 'PASS: autenticação do Outbound Text passou; o probe parou somente na rota inexistente deliberada.'
+} elseif ($outbound -match '^500\|') {
+  Write-Host 'WARN: autenticação direta passou, mas o n8n devolveu erro genérico sem detalhe suficiente nos logs atuais.'
+  Write-Host 'NEXT: use o smoke real autorizado; se falhar, execute diagnose-waha-outbound-smoke.ps1 imediatamente após a falha.'
+} else {
+  Write-Host 'PASS: probe não apresentou rejeição de autenticação.'
+}
 Write-Host 'INFO: nenhum token foi impresso intencionalmente.'
