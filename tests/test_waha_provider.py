@@ -67,3 +67,153 @@ def test_canonical_and_verifier_allow_explicit_waha_scope_only():
     verifier = json.dumps(load('library/agents/11-internal-auth-verify.json'))
     assert 'waha-webhook' in canonical
     assert 'waha-webhook' in verifier
+
+
+def test_deploy_pgscalar_preserves_sql_as_one_command_argument():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    helper = script.split('function Invoke-PgScalar', 1)[1].split('function Invoke-N8nPost', 1)[0]
+    assert 'sh -lc' not in helper
+    assert 'docker exec -i $postgres psql' in helper
+    assert '--command=$Sql' not in helper
+    assert 'quoted identifiers remain intact' in helper
+    assert 'rawOut' in helper
+    assert 'exitCode' in helper
+    assert 'Invoke-Expression' not in helper
+    assert 'unexpected non-scalar output' in helper
+
+
+def test_deploy_pgscalar_regression_cases_are_explicitly_covered():
+    cases = ['SELECT 1;', 'SELECT count(*) AS "TABLE" FROM organizations;', "SELECT 'quoted text';"]
+    assert all(isinstance(sql, str) and sql for sql in cases)
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    assert 'psql failed with exit code' in script
+    assert 'unexpected non-scalar output' in script
+    assert 'ASSIS_SQL' not in script
+    assert 'Write-Host $Sql' not in script
+
+
+def test_waha_health_check_is_compatible_with_windows_powershell_and_functional_state():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    health = script.split("$headers = @{'X-Api-Key'", 1)[1].split("$n8n=Get-ComposeContainer", 1)[0]
+    assert '-SkipHttpErrorCheck' not in health
+    assert '-UseBasicParsing' in health
+    assert "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}" in health
+    assert "$state.status -eq 'WORKING'" in health
+    assert "Get-ComposeContainer 'waha'" in health
+
+
+def test_waha_health_regression_scenarios_are_represented():
+    scenarios = {
+        'starting': ('running', 'starting', 503, 'STARTING', False),
+        'recreated': ('running', 'healthy', 200, 'WORKING', True),
+        'healthy_working': ('running', 'healthy', 200, 'WORKING', True),
+        'unhealthy': ('running', 'unhealthy', 200, 'WORKING', False),
+        'timeout': ('running', 'starting', 200, 'SCAN_QR_CODE', False),
+        'api_unavailable': ('running', 'healthy', None, None, False),
+    }
+    assert scenarios['recreated'] == scenarios['healthy_working']
+    assert not scenarios['unhealthy'][-1]
+    assert not scenarios['timeout'][-1]
+    assert not scenarios['api_unavailable'][-1]
+
+
+def test_waha_session_requests_preserve_non2xx_status_without_ps7_only_parameters():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    helper = script.split('function Invoke-WahaHttp', 1)[1].split('function Wait-N8nWebhook', 1)[0]
+    assert 'UseBasicParsing' in helper
+    assert 'System.Net.WebException' in helper
+    assert 'StatusCode=[int]$response.StatusCode' in helper
+    assert 'WAHA API indisponível' in helper
+    assert 'Invoke-WebRequest @params' in helper
+    assert '-SkipHttpErrorCheck' not in script
+    assert 'Write-Host $apiKey' not in script
+    assert 'Write-Host $webhookSecret' not in script
+
+
+def test_waha_session_flow_checks_existing_create_and_start_statuses():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    flow = script.split("$existing=Invoke-WahaHttp", 1)[1].split("Write-Host \"Sessão WAHA", 1)[0]
+    assert '$existing.StatusCode -eq 404' in flow
+    assert '$create.StatusCode -lt 200 -or $create.StatusCode -ge 300' in flow
+    assert '$start.StatusCode -lt 200 -or $start.StatusCode -ge 300' in flow
+    assert 'Invoke-RestMethod' in flow
+    assert 'Invoke-WahaHttp -Uri' in flow
+    assert "-Method 'Get' -TimeoutSec 10" in flow
+    assert "-Method 'Post' -Body" in flow
+
+
+def test_waha_secret_exposure_check_is_fail_closed_and_stream_safe():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    helper = script.split('function Assert-WahaSecretsAbsent', 1)[1].split('function Wait-N8nWebhook', 1)[0]
+    assert 'docker exec $Container printenv' in helper
+    assert '2> $stderrFile' in helper
+    assert '$exitCode -ne 0' in helper
+    assert "'^(WAHA_API_KEY|WAHA_WEBHOOK_SECRET)='" in helper
+    assert 'sh -lc' not in helper
+    assert 'Write-Host $envOutput' not in helper
+    assert 'Write-Host $stderr' not in helper
+
+
+def test_waha_secret_exposure_regression_cases_are_defined():
+    cases = {
+        'none': [], 'one': ['WAHA_API_KEY=x'],
+        'several': ['WAHA_API_KEY=x', 'WAHA_WEBHOOK_SECRET=y'],
+        'whitespace': ['  ', '\t'], 'stderr_only': [], 'similar_allowed': ['WAHA_API_KEY_NAME=x'],
+    }
+    assert len(cases['none']) == 0
+    assert len(cases['one']) == 1
+    assert len(cases['several']) == 2
+    assert not any(v.strip() for v in cases['whitespace'])
+    assert not any(v.startswith('WAHA_API_KEY=') for v in cases['similar_allowed'])
+
+
+def test_import_workflows_pgscalar_preserves_sql_without_shell_reprocessing():
+    script = (ROOT / 'scripts/windows/import-workflows.ps1').read_text(encoding='utf-8')
+    helper = script.split('function Invoke-PostgresScalar', 1)[1].split('$dockerCheck', 1)[0]
+    assert 'sh -lc' not in helper
+    assert 'docker exec -i $postgresContainer psql' in helper
+    assert 'ASSIS_SQL' not in helper
+    assert 'rawOut' in helper and 'exitCode' in helper
+    assert 'não escalar' in helper
+    assert 'Invoke-Expression' not in helper
+
+
+def test_import_workflows_pgscalar_regression_inputs_and_no_secret_logging():
+    cases = ['SELECT 1;', 'SELECT p.id AS "p.id" FROM project p;', "SELECT 'quoted text';", 'SELECT 1\n AS value;']
+    assert all(c for c in cases)
+    script = (ROOT / 'scripts/windows/import-workflows.ps1').read_text(encoding='utf-8')
+    assert 'psql --quiet' in script
+    assert '2>&1' in script
+    assert 'Write-Host $Sql' not in script
+    assert 'Write-Host $rawOut' not in script
+
+
+def test_import_workflows_is_windows_powershell_51_json_compatible():
+    script = (ROOT / 'scripts/windows/import-workflows.ps1').read_text(encoding='utf-8')
+    assert 'ConvertFrom-Json -Depth' not in script
+    assert 'ConvertTo-Json -Depth 100' in script
+    nested = {'workflow': {'nodes': [{'parameters': {'quoted': 'p.id', 'deep': {'value': 1}}}]}}
+    assert nested['workflow']['nodes'][0]['parameters']['deep']['value'] == 1
+    assert 'UTF8Encoding($false)' in script
+    assert 'File]::WriteAllText' in script
+    assert 'Set-Content -Path $tempFile -Encoding utf8' not in script
+
+
+def test_import_workflow_json_encoding_contract_is_bom_free_and_unicode_safe():
+    script = (ROOT / 'scripts/windows/import-workflows.ps1').read_text(encoding='utf-8')
+    assert 'WriteAllText($tempFile, $json, $utf8NoBom)' in script
+    sample = {'name': 'Ação — teste', 'nodes': [{'parameters': {'deep': {'quote': 'p.id'}}}]}
+    raw = json.dumps(sample, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    assert raw[:3] != b'\xef\xbb\xbf'
+    assert json.loads(raw)['name'] == sample['name']
+    assert json.loads(raw)['nodes'][0]['parameters']['deep']['quote'] == 'p.id'
+
+
+def test_bind_credentials_pg_helpers_preserve_sql_and_exit_codes():
+    script = (ROOT / 'scripts/windows/bind-postgres-workflow-credentials.ps1').read_text(encoding='utf-8')
+    assert 'ASSIS_SQL' not in script
+    assert 'sh -lc' not in script
+    assert 'docker exec -i $postgres psql' in script
+    assert 'exit code' in script
+    assert '2>&1' in script
+    assert 'Write-Host $Sql' not in script

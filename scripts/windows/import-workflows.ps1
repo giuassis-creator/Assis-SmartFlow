@@ -64,11 +64,22 @@ function Get-ComposeContainer([string]$Service) {
 }
 
 function Invoke-PostgresScalar([string]$Sql) {
-  $result = & docker exec --env "ASSIS_SQL=$Sql" $postgresContainer sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "Falha ao consultar PostgreSQL:`n$($result -join "`n")"
-  }
-  return (($result | Where-Object { $_ }) -join '').Trim()
+  $pgUser = (& docker exec $postgresContainer printenv POSTGRES_USER 2>$null).Trim()
+  $pgDatabase = (& docker exec $postgresContainer printenv POSTGRES_DB 2>$null).Trim()
+  if ([string]::IsNullOrWhiteSpace($pgUser) -or [string]::IsNullOrWhiteSpace($pgDatabase)) { throw 'Configuração PostgreSQL incompleta no container.' }
+  $previousErrorAction=$ErrorActionPreference
+  try {
+    $ErrorActionPreference='Continue'
+    # PowerShell 5.1 strips embedded double quotes from native arguments;
+    # feed SQL over stdin so aliases/quoted identifiers remain byte-for-byte.
+    $rawOut=@($Sql | & docker exec -i $postgresContainer psql --quiet -v ON_ERROR_STOP=1 -U $pgUser -d $pgDatabase --tuples-only --no-align 2>&1)
+    $exitCode=$LASTEXITCODE
+  } finally { $ErrorActionPreference=$previousErrorAction }
+  $diagnostics=(($rawOut|ForEach-Object {$_.ToString()})-join "`n").Trim()
+  if($exitCode -ne 0){ throw "Falha ao consultar PostgreSQL (exit code ${exitCode}): $diagnostics" }
+  $rows=@($rawOut|Where-Object {$_ -is [string] -and $_ -notmatch '^(NOTICE|WARNING):' -and -not [string]::IsNullOrWhiteSpace($_)}|ForEach-Object {$_.ToString().Trim()})
+  if($rows.Count -gt 1){throw 'PostgreSQL retornou saída não escalar inesperada.'}
+  return ($rows -join '').Trim()
 }
 
 $dockerCheck = Test-DockerEngine
@@ -131,7 +142,7 @@ foreach ($item in $filesToImport) {
   $file = $item.File
   $relativePath = $item.RelativePath
   $raw = Get-Content -Raw -Path $file.FullName
-  $workflow = $raw | ConvertFrom-Json -Depth 100
+  $workflow = $raw | ConvertFrom-Json
 
   if (-not $workflow.PSObject.Properties['id'] -or [string]::IsNullOrWhiteSpace([string]$workflow.id)) {
     $workflow | Add-Member -NotePropertyName id -NotePropertyValue (Get-DeterministicGuid "assis-workflow:${relativePath}") -Force
@@ -142,7 +153,9 @@ foreach ($item in $filesToImport) {
 
   $safeName = ($relativePath -replace '[^a-z0-9._-]','_')
   $tempFile = Join-Path $tempDir $safeName
-  $workflow | ConvertTo-Json -Depth 100 -Compress | Set-Content -Path $tempFile -Encoding utf8
+  $json = $workflow | ConvertTo-Json -Depth 100 -Compress
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($tempFile, $json, $utf8NoBom)
   $containerFile = "/tmp/assis-import/$safeName"
 
   Write-Host "  -> $relativePath [$($workflow.id)] version=$($workflow.versionId)"

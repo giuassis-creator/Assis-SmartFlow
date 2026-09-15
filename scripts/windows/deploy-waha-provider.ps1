@@ -59,9 +59,26 @@ function Get-Sha256Hex([string]$Value) {
 function Invoke-PgScalar([string]$Sql) {
   $postgres = Get-ComposeContainer 'postgres'
   if (-not $postgres) { throw 'Container PostgreSQL não encontrado.' }
-  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
-  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
-  return (($out | Where-Object { $_ }) -join '').Trim()
+  $pgUser = (& docker exec $postgres printenv POSTGRES_USER 2>$null).Trim()
+  $pgDatabase = (& docker exec $postgres printenv POSTGRES_DB 2>$null).Trim()
+  if ([string]::IsNullOrWhiteSpace($pgUser) -or [string]::IsNullOrWhiteSpace($pgDatabase)) { throw 'Configuração PostgreSQL incompleta no container.' }
+  # Pass SQL as one native-process argument; a shell intermediary would split
+  # multiline queries and embedded quotes before psql receives --command.
+  $previousErrorAction = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    # PowerShell 5.1 strips embedded double quotes from native arguments;
+    # feed SQL over stdin so quoted identifiers remain intact.
+    $rawOut = @($Sql | & docker exec -i $postgres psql --quiet -v ON_ERROR_STOP=1 -U $pgUser -d $pgDatabase --tuples-only --no-align 2>&1)
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorAction
+  }
+  $diagnostics = (($rawOut | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+  if ($exitCode -ne 0) { throw "psql failed with exit code ${exitCode}: $diagnostics" }
+  $rows = @($rawOut | Where-Object { $_ -is [string] -and $_ -notmatch '^(NOTICE|WARNING):' -and -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.ToString().Trim() })
+  if ($rows.Count -gt 1) { throw 'psql returned unexpected non-scalar output.' }
+  return ($rows -join '').Trim()
 }
 
 function Invoke-N8nPost([string]$Path,[string]$Token,[string]$JsonBody) {
@@ -78,6 +95,35 @@ fetch('http://127.0.0.1:5678'+path,{method:'POST',headers:{'content-type':'appli
   $out = & docker exec --env "ASSIS_PATH=$Path" --env "ASSIS_TOKEN=$Token" --env "ASSIS_BODY=$JsonBody" $n8n node -e $script 2>&1
   if ($LASTEXITCODE -ne 0) { throw "Falha ao chamar n8n internamente:`n$($out -join "`n")" }
   return (($out | Where-Object { $_ }) -join "`n").Trim()
+}
+
+function Invoke-WahaHttp([string]$Uri,[hashtable]$Headers,[string]$Method='Get',[string]$Body=$null,[string]$ContentType=$null,[int]$TimeoutSec=20) {
+  try {
+    $params=@{Uri=$Uri;Headers=$Headers;Method=$Method;UseBasicParsing=$true;TimeoutSec=$TimeoutSec}
+    $verb=$Method.ToUpperInvariant()
+    if($verb -in @('POST','PUT','PATCH') -and $null -ne $Body){$params.Body=$Body;if($ContentType){$params.ContentType=$ContentType}}
+    return Invoke-WebRequest @params
+  } catch [System.Net.WebException] {
+    $response=$_.Exception.Response
+    if($null -eq $response){throw "WAHA API indisponível: $($_.Exception.Message)"}
+    $reader=New-Object IO.StreamReader($response.GetResponseStream())
+    try{$content=$reader.ReadToEnd()}finally{$reader.Dispose()}
+    return [pscustomobject]@{StatusCode=[int]$response.StatusCode;Content=$content}
+  }
+}
+
+function Assert-WahaSecretsAbsent([string]$Container) {
+  if ([string]::IsNullOrWhiteSpace($Container)) { throw 'Container n8n não encontrado.' }
+  $stderrFile=[IO.Path]::GetTempFileName(); $previousErrorAction=$ErrorActionPreference
+  try {
+    $ErrorActionPreference='Continue'
+    $envOutput=@(& docker exec $Container printenv 2> $stderrFile)
+    $exitCode=$LASTEXITCODE
+    $stderr=((Get-Content $stderrFile -ErrorAction SilentlyContinue)-join "`n").Trim()
+  } finally { $ErrorActionPreference=$previousErrorAction; Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue }
+  if($exitCode -ne 0){ throw "Falha ao inspecionar ambiente n8n (exit code $exitCode): $stderr" }
+  $forbidden=@($envOutput | Where-Object { $_ -match '^(WAHA_API_KEY|WAHA_WEBHOOK_SECRET)=' })
+  if($forbidden.Count -gt 0){ throw 'Segredos WAHA foram expostos ao processo n8n.' }
 }
 
 function Wait-N8nWebhook([string]$Path,[int]$TimeoutSeconds=120) {
@@ -163,8 +209,16 @@ $headers = @{'X-Api-Key'=$apiKey;Accept='application/json'}
 $deadline=(Get-Date).AddSeconds(150)
 do {
   try {
-    $r=Invoke-WebRequest -Uri 'http://127.0.0.1:3000/api/sessions' -Headers $headers -SkipHttpErrorCheck -TimeoutSec 5
-    if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) { break }
+    $waha=Get-ComposeContainer 'waha'
+    if (-not $waha) { throw 'Container WAHA não encontrado.' }
+    $containerState = (& docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}' $waha 2>$null).Trim()
+    $stateParts = $containerState -split '\|',2
+    if ($stateParts.Count -lt 1 -or $stateParts[0] -ne 'running' -or ($stateParts.Count -gt 1 -and $stateParts[1] -eq 'unhealthy')) { throw 'Container WAHA ainda não está pronto.' }
+    $r=Invoke-WebRequest -Uri ('http://127.0.0.1:3000/api/sessions/'+[uri]::EscapeDataString($session)) -Headers $headers -UseBasicParsing -TimeoutSec 5
+    if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
+      $state = $r.Content | ConvertFrom-Json
+      if ($state.status -eq 'WORKING') { break }
+    }
   } catch {}
   Start-Sleep -Seconds 3
 } while ((Get-Date) -lt $deadline)
@@ -174,8 +228,7 @@ if ((Get-Date) -ge $deadline) {
   throw 'WAHA não ficou saudável em até 150s.'
 }
 $n8n=Get-ComposeContainer 'n8n'
-$exposure=& docker exec $n8n sh -lc 'if [ -n "${WAHA_API_KEY:-}" ] || [ -n "${WAHA_WEBHOOK_SECRET:-}" ]; then echo PRESENT; else echo ABSENT; fi' 2>&1
-if (($exposure -join '').Trim() -ne 'ABSENT') { throw 'Segredos WAHA foram expostos ao processo n8n.' }
+Assert-WahaSecretsAbsent $n8n
 Write-Host 'PASS: WAHA saudável em loopback; segredos ausentes do processo n8n.'
 
 Write-Host '4/8 Importando workflows WAHA e roteamento multi-provider...'
@@ -212,17 +265,17 @@ if($LASTEXITCODE -ne 0){throw 'Falha nos contratos do provider WhatsApp.'}
 
 Write-Host '7/8 Criando/iniciando sessão WAHA idempotentemente...'
 $sessionUrl='http://127.0.0.1:3000/api/sessions/'+[uri]::EscapeDataString($session)
-$existing=Invoke-WebRequest -Uri $sessionUrl -Headers $headers -SkipHttpErrorCheck -TimeoutSec 10
+$existing=Invoke-WahaHttp -Uri $sessionUrl -Headers $headers -Method 'Get' -TimeoutSec 10
 if($existing.StatusCode -eq 404){
   $createHeaders=@{'X-Api-Key'=$apiKey;Accept='application/json';'Content-Type'='application/json'}
-  $create=Invoke-WebRequest -Uri 'http://127.0.0.1:3000/api/sessions' -Headers $createHeaders -Method Post -Body (@{name=$session}|ConvertTo-Json -Compress) -SkipHttpErrorCheck -TimeoutSec 20
+  $create=Invoke-WahaHttp -Uri 'http://127.0.0.1:3000/api/sessions' -Headers $createHeaders -Method 'Post' -Body (@{name=$session}|ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 20
   if($create.StatusCode -lt 200 -or $create.StatusCode -ge 300){throw "Falha ao criar sessão WAHA (HTTP $($create.StatusCode))."}
 }
 Start-Sleep -Seconds 3
 $state=Invoke-RestMethod -Uri $sessionUrl -Headers $headers -Method Get -TimeoutSec 10
 if($state.status -eq 'STOPPED'){
   $startHeaders=@{'X-Api-Key'=$apiKey;Accept='application/json';'Content-Type'='application/json'}
-  $start=Invoke-WebRequest -Uri "$sessionUrl/start" -Headers $startHeaders -Method Post -Body '{}' -SkipHttpErrorCheck -TimeoutSec 20
+  $start=Invoke-WahaHttp -Uri "$sessionUrl/start" -Headers $startHeaders -Method 'Post' -Body '{}' -ContentType 'application/json' -TimeoutSec 20
   if($start.StatusCode -lt 200 -or $start.StatusCode -ge 300){throw "Falha ao iniciar sessão WAHA (HTTP $($start.StatusCode))."}
   Start-Sleep -Seconds 4
   $state=Invoke-RestMethod -Uri $sessionUrl -Headers $headers -Method Get -TimeoutSec 10

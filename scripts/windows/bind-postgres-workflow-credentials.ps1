@@ -12,14 +12,18 @@ function Get-ComposeContainer([string]$Service) {
 }
 
 function Invoke-PgScalar([string]$Sql) {
-  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$ASSIS_SQL"' 2>&1
-  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
-  return (($out | Where-Object { $_ }) -join '').Trim()
+  $u=(& docker exec $postgres printenv POSTGRES_USER 2>$null).Trim(); $d=(& docker exec $postgres printenv POSTGRES_DB 2>$null).Trim()
+  if([string]::IsNullOrWhiteSpace($u)-or[string]::IsNullOrWhiteSpace($d)){throw 'Configuração PostgreSQL incompleta no container.'}
+  $old=$ErrorActionPreference; try{$ErrorActionPreference='Continue';$raw=@($Sql|& docker exec -i $postgres psql --quiet -v ON_ERROR_STOP=1 -U $u -d $d --tuples-only --no-align 2>&1);$code=$LASTEXITCODE}finally{$ErrorActionPreference=$old}
+  $diag=(($raw|%{$_.ToString()})-join "`n").Trim();if($code-ne 0){throw "Falha ao consultar PostgreSQL (exit code ${code}): $diag"}
+  $rows=@($raw|?{$_ -is [string]-and $_ -notmatch '^(NOTICE|WARNING):'-and -not [string]::IsNullOrWhiteSpace($_)}|%{$_.ToString().Trim()});if($rows.Count-gt 1){throw 'PostgreSQL retornou saída não escalar inesperada.'};return($rows-join '').Trim()
 }
 
 function Invoke-Pg([string]$Sql) {
-  $out = & docker exec --env "ASSIS_SQL=$Sql" $postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$ASSIS_SQL"' 2>&1
-  if ($LASTEXITCODE -ne 0) { throw ($out -join "`n") }
+  $u=(& docker exec $postgres printenv POSTGRES_USER 2>$null).Trim(); $d=(& docker exec $postgres printenv POSTGRES_DB 2>$null).Trim()
+  if([string]::IsNullOrWhiteSpace($u)-or[string]::IsNullOrWhiteSpace($d)){throw 'Configuração PostgreSQL incompleta no container.'}
+  $old=$ErrorActionPreference; try{$ErrorActionPreference='Continue';$raw=@($Sql|& docker exec -i $postgres psql --quiet -v ON_ERROR_STOP=1 -U $u -d $d 2>&1);$code=$LASTEXITCODE}finally{$ErrorActionPreference=$old}
+  if($code-ne 0){$diag=(($raw|%{$_.ToString()})-join "`n").Trim();throw "Falha ao executar PostgreSQL (exit code ${code}): $diag"}
 }
 
 $postgres = Get-ComposeContainer 'postgres'

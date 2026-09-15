@@ -7,10 +7,12 @@
 - [x] RAG com ingestão/chunking e contrato de busca; embeddings/provider ficam configuráveis no n8n.
 - [x] Kanban e transições permitidas.
 - [x] MCP catalog versionado para agenda, CRM, knowledge, handoff, Kanban, pagamentos e voz.
-- [x] Adaptadores separados para Evolution API e Chatwoot.
+- [x] Adaptadores de canal separados; WAHA é o canal da fase atual. Evolution/Chatwoot ficam reservados para fases futuras.
 - [x] Secretária Maya com política central, handoff e proteção contra invenção de fatos/ferramentas.
 - [x] Professional: voz, lembretes, lead recovery, documentos, pagamentos, Chatwoot handoff.
 - [x] Enterprise: queue mode, RBAC, approval gate, retenção e DLQ retry.
 - [x] Backup/restore, CI, testes de contrato, segurança e golden conversations.
-- [ ] Homologação E2E com credenciais reais de staging (Google Calendar, Evolution/Chatwoot, LLM/embeddings, voz e Asaas).
+- [x] Homologação funcional E2E WAHA com saída simulada, contexto/RAG, autenticação e idempotência; harness descarrega `nomic-embed-text` antes do planner (105 testes, 2026-09-15).
+- [ ] Homologação E2E real WAHA, pendente de autorização específica para mensagens e resposta automática; demais provedores de staging (Google Calendar, voz e Asaas) continuam pendentes.
 - [ ] Teste de carga e restore drill em infraestrutura alvo.
+- [x] ImplantaÃ§Ã£o controlada dos cinco workflows WAHA aprovados, com credenciais vinculadas, publicaÃ§Ã£o e pÃ³s-check simulado (2026-09-15).
