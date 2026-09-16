@@ -217,3 +217,13 @@ def test_bind_credentials_pg_helpers_preserve_sql_and_exit_codes():
     assert 'exit code' in script
     assert '2>&1' in script
     assert 'Write-Host $Sql' not in script
+
+
+def test_load_and_restore_drills_are_isolated_and_provider_free():
+    load = (ROOT / 'scripts/run_simulated_load.py').read_text(encoding='utf-8')
+    restore = (ROOT / 'scripts/run_restore_drill.py').read_text(encoding='utf-8')
+    assert 'simulation' in load and 'url' in load
+    assert 'required=True' in load
+    assert 'assis-smartflow-restore-drill' in restore
+    assert 'Production volumes' in restore
+    assert 'ASSIS_E2E_SIMULATED' in load and 'isolated-marker' in load

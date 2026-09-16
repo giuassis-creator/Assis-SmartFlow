@@ -118,6 +118,8 @@ class Runtime:
         self.webhook = os.environ['WAHA_WEBHOOK_SECRET']
         self.base = os.environ['N8N_INTERNAL_URL']
         self.ids = []
+        self.run_id = os.environ.get('ASSIS_E2E_RUN_ID') or os.environ.get('E2E_LOAD_PROJECT') or 'e2e-default'
+        self.namespace = uuid.uuid5(uuid.NAMESPACE_URL, 'assis-smartflow:e2e:' + self.run_id)
 
     def sql(self, query, args=()):
         with self.conn.cursor() as cur:
@@ -191,21 +193,21 @@ class Runtime:
         assert status in (200,409)
         self.tenants=[]
         for label,code in [('a','ALFA-AZUL'),('b','BETA-VERDE')]:
-            org=str(uuid.uuid4());slug='e2e-simulated-'+org;session='e2e-'+org
-            self.sql('INSERT INTO organizations(id,slug,name,config) VALUES(%s,%s,%s,%s::jsonb)',
-                     (org,slug,'Simulated E2E',json.dumps({'smoke_test':True})))
+            org=str(uuid.uuid5(self.namespace, 'organization:'+label));slug='e2e-simulated-'+self.run_id+'-'+label;session='e2e-'+self.run_id+'-'+label
+            self.sql('INSERT INTO organizations(id,slug,name,config) VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT (id) DO UPDATE SET slug=EXCLUDED.slug,config=EXCLUDED.config',
+                     (org,slug,'Simulated E2E',json.dumps({'smoke_test':True,'run_id':self.run_id})))
             self.ids.append(org)
-            self.sql("INSERT INTO organization_whatsapp_providers(organization_id,provider,session_name,enabled) VALUES(%s,'waha',%s,true)",(org,session))
+            self.sql("INSERT INTO organization_whatsapp_providers(organization_id,provider,session_name,enabled) VALUES(%s,'waha',%s,true) ON CONFLICT (organization_id,provider,session_name) DO UPDATE SET enabled=true",(org,session))
             tenant={'org':org,'session':session,'code':code,'rag_code':'BASE-'+code}
             status,_ = self.inbound(tenant,'seed-'+label,simulation=False)
             assert status==200
             conv=self.sql('SELECT id FROM conversations WHERE organization_id=%s',(org,))[0][0]
             tenant['conv']=str(conv)
-            self.sql('INSERT INTO short_term_memory(conversation_id,summary) VALUES(%s,%s)',
+            self.sql('INSERT INTO short_term_memory(conversation_id,summary) VALUES(%s,%s) ON CONFLICT (conversation_id) DO UPDATE SET summary=EXCLUDED.summary',
                      (conv,'O código de memória é '+code+'.'))
             status,_=self.post('/webhook/internal/rag/ingest',{'organization_id':org,
                 'title':'Código da base de conhecimento','content':'O código da base de conhecimento desta organização é BASE-'+code+'.',
-                'checksum':'e2e-'+org,'metadata':{'smoke_test':True}})
+                'checksum':'e2e-'+self.run_id+'-'+label,'metadata':{'smoke_test':True,'run_id':self.run_id}})
             assert status==200
             self.tenants.append(tenant)
         self.unload_embedding_model()

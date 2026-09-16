@@ -1,0 +1,26 @@
+# Temporary load-only override. Use with docker-compose.e2e-simulated.yml.
+# All values are mandatory; there is deliberately no production fallback.
+services:
+  embed-proxy:
+    image: n8nio/n8n:2.37.7
+    entrypoint: ["node"]
+    command: ["/proxy/ollama_embed_proxy.js"]
+    volumes:
+      - ../scripts/ollama_embed_proxy.js:/proxy/ollama_embed_proxy.js:ro
+    networks: [isolated]
+  n8n:
+    environment:
+      ASSIS_E2E_SIMULATED: '1'
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+    ports:
+      - "${E2E_LOAD_PORT:?E2E_LOAD_PORT required}:5678"
+  ollama:
+    environment:
+      ASSIS_E2E_SIMULATED: '1'
+      OLLAMA_MODELS: /root/.ollama/models
+    volumes:
+      - model_cache:/root/.ollama:rw
+volumes:
+  model_cache:
+    external: false
+    name: ${E2E_MODEL_VOLUME:?E2E_MODEL_VOLUME required}

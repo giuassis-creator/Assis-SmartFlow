@@ -62,3 +62,14 @@ Webhooks WAHA comuns continuam apenas na persistÃªncia. A simulaÃ§Ã£o nÃ£o promo
 - Os cinco workflows WAHA aprovados foram importados, vinculados ÃƒÂ  credencial PostgreSQL e publicados/ativos: Internal Auth Verify, 01 Canonical Ingress, Internal Tool Policy Gateway, Starter 06 Outbound Text e Starter 08 WAHA Inbound.
 - PÃƒÂ³s-check exclusivamente simulado: replay concorrente/idempotÃƒÂªncia, autenticaÃƒÂ§ÃƒÂ£o, isolamento organizacional e provider `delivered=false` permanecem aprovados pela suÃƒÂ­te E2E de 105 testes; nenhum transporte externo foi chamado.
 - Runtime preservado: 48 workflows, 15 mensagens, 2 credenciais, volumes existentes, containers saudÃƒÂ¡veis e sessÃƒÂ£o WAHA `default` em `WORKING`. `WAHA_TEST_NUMBER` permaneceu vazio.
+
+## Carga simulada e restore drill — encerramento parcial (2026-09-16)
+
+- **Restore drill: APPROVED.** Restaurado em projeto e volumes temporários, sem usar volumes ativos.
+- **Suíte E2E funcional: 120 passed, 7 skipped.**
+- **Harness de carga: implementado e isolado.** Perfis, métricas estruturadas, ciclo de vida e cleanup protegido estão versionados.
+- **Cache Ollama E2E: VALIDATED.** `assis-smartflow-e2e-ollama-cache` é persistente e rotulado com `assis.e2e.purpose=ollama-model-cache`, `assis.e2e.production=false` e `assis.e2e.owner=simulated-load-harness`. Nunca deve ser montado pelo Compose de produção nem compartilhado com `assis-smartflow_ollama_data`.
+- **Carga/planner: BLOCKED — não aprovada.** O bootstrap completou modelos, migrations, publicação, restart/readiness e RAG via embed-proxy, mas `Runtime.setup()` falhou na cadeia completa do planner (`simulated full chain failed`). Os perfis de carga não foram executados.
+- Última falha sanitizada: etapa planner retornou status funcional não-200; duração detalhada não foi persistida antes da asserção. Modelos estavam disponíveis e o RAG via proxy havia concluído. Não houve transporte externo.
+- Retomada: validar digests, usar `ASSIS_E2E_SIMULATED=1`, projeto `assis-smartflow-load-*` e `E2E_MODEL_VOLUME=assis-smartflow-e2e-ollama-cache`; executar preflight/readiness e perfis em hardware adequado. Remover o cache somente após validar os três labels e com `docker volume rm assis-smartflow-e2e-ollama-cache`; nunca montar/remover `assis-smartflow_ollama_data`.
+- E2E real WAHA e respostas automáticas reais permanecem **não autorizados**.

@@ -15,4 +15,5 @@
 - [x] Homologação funcional E2E WAHA com saída simulada, contexto/RAG, autenticação e idempotência; harness descarrega `nomic-embed-text` antes do planner (105 testes, 2026-09-15).
 - [ ] Homologação E2E real WAHA, pendente de autorização específica para mensagens e resposta automática; demais provedores de staging (Google Calendar, voz e Asaas) continuam pendentes.
 - [ ] Teste de carga e restore drill em infraestrutura alvo.
+- [x] Restore drill isolado aprovado; harness de carga simulado implementado. Baseline de carga permanece **BLOCKED** pela capacidade local do planner Ollama (2026-09-16). Cache de modelos E2E independente validado; E2E real e respostas automáticas reais continuam não autorizados.
 - [x] ImplantaÃ§Ã£o controlada dos cinco workflows WAHA aprovados, com credenciais vinculadas, publicaÃ§Ã£o e pÃ³s-check simulado (2026-09-15).
