@@ -61,7 +61,7 @@ def test_load_profiles_reuse_approved_runtime_setup_and_fail_closed():
 
 def test_isolated_lifecycle_order_and_production_guards():
     source = (Path(__file__).parents[1] / 'scripts' / 'run_simulated_load_isolated.py').read_text(encoding='utf-8')
-    order = ["run(['docker','volume','create'", "c(['config'])", "c(['up'", "wait_postgres_stable(compose,env,log)", "import:credentials", "import:workflow", "publish:workflow", "run','--rm','qa'"]
+    order = ["run(['docker','volume','create'", "c(['config','--quiet'])", "c(['build','qa'])", "c(['up'", "wait_postgres_stable(compose,env,log)", "import:credentials", "import:workflow", "publish:workflow", "run','--rm','qa'"]
     positions = [source.find(item) for item in order]
     assert all(pos >= 0 for pos in positions) and positions == sorted(positions)
     assert 'ASSIS_DOMAIN' in source and 'production endpoint rejected' in source
@@ -75,6 +75,15 @@ def test_isolated_lifecycle_order_and_production_guards():
     assert 'Ollama daemon did not become ready' in source and "for model in ('qwen3:4b-instruct','nomic-embed-text:latest')" in source
     assert 'model-pull.stdout.log' in source and 'model-pull.stderr.log' in source and 'model-pull.exitcodes.jsonl' in source
     assert "'docker','volume','rm'" not in source
+
+
+def test_isolated_qa_image_is_built_and_config_does_not_log_secrets():
+    compose=(Path(__file__).parents[1]/'core/docker-compose.e2e-simulated.yml').read_text(encoding='utf-8')
+    source=(Path(__file__).parents[1]/'scripts/run_simulated_load_isolated.py').read_text(encoding='utf-8')
+    qa=compose.split('  qa:',1)[1].split('\nnetworks:',1)[0]
+    assert 'build:' in qa and 'context: ./qa' in qa
+    assert "c(['config','--quiet'])" in source and "c(['build','qa'])" in source
+    assert "c(['config'])" not in source
 
 
 def test_postgres_wait_rejects_init_server_and_requires_stability(monkeypatch, tmp_path):

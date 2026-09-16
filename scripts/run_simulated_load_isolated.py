@@ -130,7 +130,9 @@ def main():
         return r
     try:
         provision_models(env, private)
-        c(['config'])
+        # Validate without rendering generated credentials into the lifecycle log.
+        c(['config','--quiet'])
+        c(['build','qa'])
         pull_name=PROJECT+'-model-pull'
         run(['docker','rm','-f',pull_name],env)
         c(['up','-d','postgres','n8n','qdrant','ollama','embed-proxy'])

@@ -45,6 +45,8 @@ services:
       - model_cache:/model-cache:ro
     networks: [isolated]
   qa:
+    build:
+      context: ./qa
     image: assis-smartflow-qa:latest
     environment:
       ASSIS_E2E_SIMULATED: '1'
