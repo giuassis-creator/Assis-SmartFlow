@@ -1,6 +1,11 @@
 # Temporary load-only override. Use with docker-compose.e2e-simulated.yml.
 # All values are mandatory; there is deliberately no production fallback.
 services:
+  qa:
+    environment:
+      LOAD_EVIDENCE_PATH: /evidence/load-evidence.json
+    volumes:
+      - ../.local/load-isolated:/evidence:rw
   embed-proxy:
     image: n8nio/n8n:2.37.7
     entrypoint: ["node"]

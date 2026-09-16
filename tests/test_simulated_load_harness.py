@@ -57,6 +57,16 @@ def test_load_profiles_reuse_approved_runtime_setup_and_fail_closed():
     assert 'Runtime()' in source and 'rt.setup()' in source
     assert "ASSIS_E2E_SIMULATED" in source and 'required workflow missing or inactive' in source
     assert 'baseline' in source and 'metrics_unavailable' in source
+    assert "os.getenv('LOAD_EVIDENCE_PATH'" in source
+
+
+def test_load_evidence_uses_dedicated_writable_mount_only():
+    base=(Path(__file__).parents[1]/'core/docker-compose.e2e-simulated.yml').read_text(encoding='utf-8')
+    override=(Path(__file__).parents[1]/'core/docker-compose.load-simulated.override.yml').read_text(encoding='utf-8')
+    assert '..:/workspace:ro' in base
+    assert 'LOAD_EVIDENCE_PATH: /evidence/load-evidence.json' in override
+    assert '../.local/load-isolated:/evidence:rw' in override
+    assert '/workspace:rw' not in base+override
 
 
 def test_isolated_lifecycle_order_and_production_guards():

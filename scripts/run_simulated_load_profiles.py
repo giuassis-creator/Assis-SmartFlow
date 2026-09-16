@@ -20,7 +20,7 @@ def stats(samples, started):
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--diagnose-first-ingress',action='store_true'); parser.add_argument('--setup-only',action='store_true'); args=parser.parse_args()
     if os.getenv('ASSIS_E2E_SIMULATED')!='1': raise SystemExit('missing isolated marker')
-    rt=Runtime(); evidence=Path('.local/load-evidence.json'); evidence.parent.mkdir(exist_ok=True)
+    rt=Runtime(); evidence=Path(os.getenv('LOAD_EVIDENCE_PATH','.local/load-evidence.json')); evidence.parent.mkdir(parents=True,exist_ok=True)
     try:
         if args.diagnose_first_ingress:
             original=rt.inbound; captured=[]; before_exec=[]
