@@ -212,10 +212,15 @@ class Runtime:
             self.tenants.append(tenant)
         self.unload_embedding_model()
         a=self.tenants[0]
-        self.success_key='complete-'+str(uuid.uuid4())
-        status,self.success=self.inbound(a,self.success_key)
+        self.success_key='complete-'+self.run_id
+        status,result=self.inbound(a,self.success_key)
         assert status==200, 'simulated full chain failed'
-        validate(self.success,RESULT_SCHEMA)
+        if result.get('duplicate') is True:
+            if not hasattr(self,'success'):
+                raise AssertionError('deterministic full-chain replay has no prior result')
+        else:
+            self.success=result
+            validate(self.success,RESULT_SCHEMA)
 
     def cleanup(self):
         for org in self.ids:

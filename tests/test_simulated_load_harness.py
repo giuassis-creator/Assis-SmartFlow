@@ -118,6 +118,10 @@ def test_postgres_wait_times_out_closed(monkeypatch, tmp_path):
 def test_runtime_setup_uses_run_identity_namespace():
     source = (Path(__file__).parents[1] / 'tests' / 'test_waha_simulated_e2e.py').read_text(encoding='utf-8')
     assert 'self.run_id' in source and 'self.namespace' in source and 'uuid.uuid5' in source
+    assert "self.success_key='complete-'+self.run_id" in source
+    assert "result.get('duplicate') is True" in source
+    setup=source.split('    def setup(self):',1)[1].split('    def cleanup(self):',1)[0]
+    assert 'uuid.uuid4()' not in setup
 
 
 def test_single_loaded_model_flag_is_not_present_in_load_override():
