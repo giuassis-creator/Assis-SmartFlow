@@ -71,6 +71,22 @@ def provision_models(env, private):
     (private/'model-list.txt').write_text(final.stdout,encoding='utf-8')
     return name
 
+def wait_postgres_stable(compose, env, log, timeout=120, consecutive=2):
+    """Wait for the final TCP-listening server, not the init-only socket server."""
+    deadline=time.monotonic()+timeout
+    diagnostics=log.with_name('postgres-readiness.jsonl')
+    diagnostics.write_text('',encoding='utf-8')
+    stable=0; attempt=0
+    while time.monotonic()<deadline:
+        attempt+=1
+        probe=run(compose+['exec','-T','postgres','psql','-h','127.0.0.1','-U','assis_e2e','-d','assis_e2e','-At','-c','select 1'],env,check=False,timeout=10)
+        stable=stable+1 if probe.returncode==0 and probe.stdout.strip()=='1' else 0
+        with diagnostics.open('a',encoding='utf-8') as stream:
+            stream.write(json.dumps({'attempt':attempt,'exit_code':probe.returncode,'stable_successes':stable})+'\n')
+        if stable>=consecutive: return
+        time.sleep(2)
+    raise RuntimeError('isolated PostgreSQL did not become stably ready')
+
 def wait_ready(compose, env, log, timeout=300):
     deadline=time.time()+timeout
     diagnostics=log.with_name('readiness-pollings.jsonl')
@@ -118,7 +134,7 @@ def main():
         pull_name=PROJECT+'-model-pull'
         run(['docker','rm','-f',pull_name],env)
         c(['up','-d','postgres','n8n','qdrant','ollama','embed-proxy'])
-        c(['exec','-T','postgres','psql','-U','assis_e2e','-d','assis_e2e','-c','select 1'])
+        wait_postgres_stable(compose,env,log)
         workflows=[]
         for rel in PATHS:
             w=json.loads((ROOT/rel).read_text(encoding='utf-8'))

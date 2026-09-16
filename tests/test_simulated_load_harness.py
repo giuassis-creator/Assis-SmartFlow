@@ -10,6 +10,7 @@ from scripts.simulated_load_harness import (
     cleanup_targets, validate_isolation,
 )
 from scripts.run_simulated_load import Sample, percentile, summarize
+from scripts import run_simulated_load_isolated as isolated
 
 
 def test_requires_marker_and_names():
@@ -60,7 +61,7 @@ def test_load_profiles_reuse_approved_runtime_setup_and_fail_closed():
 
 def test_isolated_lifecycle_order_and_production_guards():
     source = (Path(__file__).parents[1] / 'scripts' / 'run_simulated_load_isolated.py').read_text(encoding='utf-8')
-    order = ["run(['docker','volume','create'", "c(['config'])", "c(['up'", "c(['exec','-T','postgres'", "import:credentials", "import:workflow", "publish:workflow", "run','--rm','qa'"]
+    order = ["run(['docker','volume','create'", "c(['config'])", "c(['up'", "wait_postgres_stable(compose,env,log)", "import:credentials", "import:workflow", "publish:workflow", "run','--rm','qa'"]
     positions = [source.find(item) for item in order]
     assert all(pos >= 0 for pos in positions) and positions == sorted(positions)
     assert 'ASSIS_DOMAIN' in source and 'production endpoint rejected' in source
@@ -74,6 +75,35 @@ def test_isolated_lifecycle_order_and_production_guards():
     assert 'Ollama daemon did not become ready' in source and "for model in ('qwen3:4b-instruct','nomic-embed-text:latest')" in source
     assert 'model-pull.stdout.log' in source and 'model-pull.stderr.log' in source and 'model-pull.exitcodes.jsonl' in source
     assert "'docker','volume','rm'" not in source
+
+
+def test_postgres_wait_rejects_init_server_and_requires_stability(monkeypatch, tmp_path):
+    outcomes=iter([(2,''),(0,'1\n'),(2,''),(0,'1\n'),(0,'1\n')])
+    calls=[]
+    def fake_run(args, env, **kwargs):
+        calls.append(args)
+        code,stdout=next(outcomes)
+        return isolated.SimpleNamespace(returncode=code,stdout=stdout,stderr='')
+    monkeypatch.setattr(isolated,'run',fake_run)
+    monkeypatch.setattr(isolated.time,'sleep',lambda _: None)
+
+    isolated.wait_postgres_stable(['docker','compose'],{},tmp_path/'lifecycle.log',timeout=5,consecutive=2)
+
+    assert len(calls)==5
+    assert all(call[call.index('psql'):call.index('psql')+3] == ['psql','-h','127.0.0.1'] for call in calls)
+    records=(tmp_path/'postgres-readiness.jsonl').read_text(encoding='utf-8').splitlines()
+    assert [__import__('json').loads(row)['stable_successes'] for row in records] == [0,1,0,1,2]
+    assert all('password' not in row.lower() for row in records)
+
+
+def test_postgres_wait_times_out_closed(monkeypatch, tmp_path):
+    ticks=iter([0.0,0.0,1.1])
+    monkeypatch.setattr(isolated.time,'monotonic',lambda: next(ticks))
+    monkeypatch.setattr(isolated.time,'sleep',lambda _: None)
+    monkeypatch.setattr(isolated,'run',lambda *args,**kwargs: isolated.SimpleNamespace(returncode=2,stdout='',stderr=''))
+
+    with pytest.raises(RuntimeError,match='did not become stably ready'):
+        isolated.wait_postgres_stable(['docker','compose'],{},tmp_path/'lifecycle.log',timeout=1,consecutive=2)
 
 
 def test_runtime_setup_uses_run_identity_namespace():
