@@ -356,7 +356,8 @@ def test_authorized_real_e2e_warms_chat_planner_before_opening_message_window():
     assert warm < prompt
     assert "fetch('http://ollama:11434/api/chat'" in script
     assert 'keep_alive:keepAlive' in script
-    assert 'num_ctx:4096' in script
+    assert 'num_ctx:2048' in script
+    assert 'num_ctx:4096' not in script
     assert 'AbortSignal.timeout(240000)' in script
     assert "result.done!==true" in script
     assert script.count("$warmScript=@'") == 1

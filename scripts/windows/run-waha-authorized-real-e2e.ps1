@@ -67,7 +67,7 @@ function Warm-OllamaPlanner([int]$KeepAliveSeconds) {
   $warmScript=@'
 const model=process.env.ASSIS_MODEL;
 const keepAlive=process.env.ASSIS_KEEP_ALIVE+'s';
-const body={model,stream:false,keep_alive:keepAlive,options:{temperature:0,num_predict:4,num_ctx:4096},messages:[{role:'user',content:'Responda somente: OK'}]};
+const body={model,stream:false,keep_alive:keepAlive,options:{temperature:0,num_predict:4,num_ctx:2048},messages:[{role:'user',content:'Responda somente: OK'}]};
 fetch('http://ollama:11434/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(240000)})
   .then(async response=>{const result=await response.json();if(!response.ok||result.done!==true)process.exit(2);console.log('READY')})
   .catch(()=>process.exit(3));

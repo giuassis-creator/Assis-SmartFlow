@@ -29,6 +29,6 @@ def test_agent_runtime_bounds_local_generation_without_changing_timeouts():
     nodes={node['name']:node for node in data['nodes']}
     for name in ('Prepare Planner Context','Prepare Final Response'):
         code=nodes[name]['parameters']['jsCode']
-        assert 'options:{temperature:0,num_predict:256}' in code
+        assert 'options:{temperature:0,num_predict:256,num_ctx:2048}' in code
     assert nodes['Ollama Agent Planner']['parameters']['options']['timeout']==180000
     assert nodes['Ollama Final Response']['parameters']['options']['timeout']==180000
