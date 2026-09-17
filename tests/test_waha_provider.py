@@ -364,3 +364,7 @@ def test_authorized_real_e2e_warms_chat_planner_before_opening_message_window():
     assert "function Protect-DiagnosticText([string]$Text,[string]$Marker)" in script
     assert "$safe=$safe.Replace($Marker,'[REDACTED_MARKER]')" in script
     assert "-notmatch '^[A-Za-z0-9._:/-]+$'" in script
+def test_deploy_includes_bounded_agent_runtime_workflow():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    assert "'library/agents/00-agent-runtime.json'" in script
+    assert "'Library Agent Runtime'" in script

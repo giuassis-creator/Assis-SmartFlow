@@ -4,6 +4,7 @@ Set-Location $root
 $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docker-compose.desktop.yml','-f','core/docker-compose.waha-setup.yml')
 $workflowPaths = @(
   'library/agents/11-internal-auth-verify.json',
+  'library/agents/00-agent-runtime.json',
   'library/workflows/01-canonical-ingress.json',
   'library/workflows/07-rag-search.json',
   'library/agents/09-tool-policy-gateway.json',
@@ -12,6 +13,7 @@ $workflowPaths = @(
 )
 $workflowNames = @(
   'Internal Auth Verify',
+  'Library Agent Runtime',
   '01 Canonical Ingress',
   '07 RAG Search',
   'Internal Tool Policy Gateway',
