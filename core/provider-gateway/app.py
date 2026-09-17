@@ -16,6 +16,10 @@ N8N_INTERNAL_URL = os.getenv("N8N_INTERNAL_URL", "http://n8n:5678").rstrip("/")
 WHATSAPP_PROVIDER_DEFAULT = os.getenv("WHATSAPP_PROVIDER_DEFAULT", "waha").strip().lower()
 WAHA_BASE_URL = os.getenv("WAHA_BASE_URL", "http://waha:3000").rstrip("/")
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
+WAHA_WEBHOOK_SECRET = os.getenv("WAHA_WEBHOOK_SECRET", "")
+INTERNAL_AGENT_TOKEN = os.getenv("INTERNAL_AGENT_TOKEN", "")
+WAHA_REAL_E2E_ENABLED = os.getenv("WAHA_REAL_E2E_ENABLED", "false").strip().lower() == "true"
+WAHA_REAL_E2E_TEST_NUMBER = os.getenv("WAHA_REAL_E2E_TEST_NUMBER", "").strip()
 EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
@@ -28,6 +32,24 @@ class SendTextRequest(BaseModel):
     delay_ms: int = Field(default=0, ge=0, le=15000)
     provider: str | None = Field(default=None, max_length=32)
     session: str | None = Field(default=None, max_length=120)
+
+
+def _real_e2e_number() -> str | None:
+    if not WAHA_REAL_E2E_TEST_NUMBER:
+        return None
+    try:
+        return _normalized_number(WAHA_REAL_E2E_TEST_NUMBER)
+    except HTTPException:
+        return None
+
+
+def _real_e2e_ready() -> bool:
+    return bool(
+        WAHA_REAL_E2E_ENABLED
+        and WAHA_WEBHOOK_SECRET
+        and INTERNAL_AGENT_TOKEN
+        and _real_e2e_number()
+    )
 
 
 def _json_request(url: str, payload: dict, headers: dict[str, str], timeout: float = 30.0):
@@ -180,9 +202,47 @@ def healthz():
         "default_provider": WHATSAPP_PROVIDER_DEFAULT,
         "waha_configured": bool(WAHA_API_KEY),
         "waha_reachable": 200 <= waha_status < 300,
+        "waha_real_e2e_enabled": WAHA_REAL_E2E_ENABLED,
+        "waha_real_e2e_ready": _real_e2e_ready(),
         "evolution_configured": bool(EVOLUTION_BASE_URL and EVOLUTION_API_KEY and EVOLUTION_INSTANCE),
         "evolution_payload_style": EVOLUTION_SENDTEXT_PAYLOAD_STYLE,
     }
+
+
+@app.post("/v1/waha/webhook")
+def waha_webhook(payload: dict, x_assis_secret: str | None = Header(default=None)):
+    if not WAHA_WEBHOOK_SECRET or x_assis_secret != WAHA_WEBHOOK_SECRET:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="invalid WAHA webhook secret")
+    if WAHA_REAL_E2E_ENABLED and not _real_e2e_ready():
+        raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail="WAHA real E2E gate is not ready")
+
+    forwarded = dict(payload)
+    event = str(payload.get("event") or "").strip()
+    provider_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    sender = str(provider_payload.get("from") or "").strip()
+    eligible = False
+    if event == "message" and provider_payload.get("fromMe") is not True and sender:
+        try:
+            eligible = _real_e2e_ready() and _normalized_number(sender) == _real_e2e_number()
+        except HTTPException:
+            eligible = False
+    forwarded["real_e2e"] = bool(eligible)
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Assis-Secret": WAHA_WEBHOOK_SECRET,
+    }
+    if eligible:
+        headers["X-Assis-Internal-Token"] = INTERNAL_AGENT_TOKEN
+    status, body = _json_request(
+        f"{N8N_INTERNAL_URL}/webhook/adapter/waha/in",
+        forwarded,
+        headers,
+        timeout=620.0,
+    )
+    if status < 200 or status >= 300:
+        raise HTTPException(status_code=HTTPStatus.BAD_GATEWAY, detail="WAHA inbound workflow failed")
+    return body
 
 
 @app.post("/v1/whatsapp/send-text")

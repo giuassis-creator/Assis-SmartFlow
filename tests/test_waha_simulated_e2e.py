@@ -31,7 +31,8 @@ def test_integration_starts_only_after_new_canonical_persistence():
     assert 'ON CONFLICT(organization_id,idempotency_key) DO NOTHING RETURNING *' in persist['parameters']['query']
     assert not persist.get('alwaysOutputData')
     assert w['connections']['Persist Canonical Event']['main'][0][0]['node'] == 'Prepare Simulated Turn'
-    assert 'core-internal-agent' in n['Prepare Simulated Turn']['parameters']['jsCode']
+    assert 'auth.internal_token' in n['Prepare Simulated Turn']['parameters']['jsCode']
+    assert "b.simulation===true||b.real_e2e===true" in n['Authorize Canonical Ingress']['parameters']['jsCode']
     assert 'simulation' in n['Route Simulated Turn']['parameters']['conditions']['conditions'][0]['leftValue']
 
 
@@ -66,8 +67,8 @@ def test_simulation_cannot_execute_planner_tools_or_override_transport():
 def test_waha_session_mapping_is_unambiguous_and_simulation_requires_core_auth():
     n = nodes('starter/workflows/08-waha-inbound.json')
     assert 'count(*)=1' in n['Resolve WAHA Organization']['parameters']['query']
-    assert 'simulation&&!internal' in n['Prepare WAHA Auth']['parameters']['jsCode']
-    assert 'simulation requires internal authentication' in nodes('library/workflows/01-canonical-ingress.json')['Authorize Canonical Ingress']['parameters']['jsCode']
+    assert '(simulation||realE2E)&&!internal' in n['Prepare WAHA Auth']['parameters']['jsCode']
+    assert 'automated turn requires internal authentication' in nodes('library/workflows/01-canonical-ingress.json')['Authorize Canonical Ingress']['parameters']['jsCode']
 
 
 def test_e2e_fixture_unloads_embedding_model_before_planner():

@@ -62,6 +62,51 @@ def test_waha_inbound_is_scoped_authenticated_and_resolves_session_tenant():
     assert '$env.' not in text
 
 
+def test_real_e2e_trust_boundary_is_gateway_only_and_disabled_by_default():
+    compose = (ROOT / 'core/docker-compose.yml').read_text(encoding='utf-8')
+    assert 'WHATSAPP_HOOK_URL: http://provider-gateway:8080/v1/waha/webhook' in compose
+    assert 'WAHA_REAL_E2E_ENABLED: ${WAHA_REAL_E2E_ENABLED:-false}' in compose
+    assert 'WAHA_REAL_E2E_TEST_NUMBER: ${WAHA_REAL_E2E_TEST_NUMBER:-}' in compose
+    assert 'INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN:-}' in compose
+    gateway_block = compose.split('\n  provider-gateway:\n', 1)[1].split('\n  ollama:\n', 1)[0]
+    assert 'ports:' not in gateway_block
+    n8n_block = compose.split('\n  n8n:\n', 1)[1].split('\n  waha:\n', 1)[0]
+    assert 'INTERNAL_AGENT_TOKEN' not in n8n_block
+
+    gateway = (ROOT / 'core/provider-gateway/app.py').read_text(encoding='utf-8')
+    assert '@app.post("/v1/waha/webhook")' in gateway
+    assert 'x_assis_secret != WAHA_WEBHOOK_SECRET' in gateway
+    assert 'WAHA_REAL_E2E_ENABLED and not _real_e2e_ready()' in gateway
+    assert '_normalized_number(sender) == _real_e2e_number()' in gateway
+    assert 'headers["X-Assis-Internal-Token"] = INTERNAL_AGENT_TOKEN' in gateway
+    assert 'if eligible:' in gateway
+    assert 'forwarded["real_e2e"] = bool(eligible)' in gateway
+    assert 'timeout=620.0' in gateway
+
+    inbound = json.dumps(load('starter/workflows/08-waha-inbound.json'))
+    canonical = json.dumps(load('library/workflows/01-canonical-ingress.json'))
+    assert 'automated turn requires internal authentication' in inbound
+    assert 'real_e2e' in inbound
+    assert "b.simulation===true||b.real_e2e===true" in canonical
+    assert "mode+'-reply:'+event.id" in canonical
+    assert "req.simulation===true?'simulated':'waha'" in canonical
+
+
+def test_authorized_real_e2e_runner_restores_gate_and_never_logs_number():
+    script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
+    assert "[ValidatePattern('^\\+?[0-9]{8,15}$')]" in script
+    assert "Set-EnvLine $originalLines 'WAHA_REAL_E2E_ENABLED' 'true'" in script
+    assert "Set-EnvLine $temporary 'WAHA_REAL_E2E_TEST_NUMBER' $TestNumber" in script
+    assert "Restore-EnvLine $current 'WAHA_REAL_E2E_ENABLED'" in script
+    assert "Restore-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER'" in script
+    assert 'Restart-GateServices' in script
+    assert "real-e2e-reply:$inboundId" in script
+    assert "direction='in'" in script and "direction='out'" in script
+    assert 'Write-Host $TestNumber' not in script
+    assert 'WAHA_REAL_E2E_TEST_NUMBER=$TestNumber' not in script
+    assert 'UTF8Encoding($false)' in script
+
+
 def test_canonical_and_verifier_allow_explicit_waha_scope_only():
     canonical = json.dumps(load('library/workflows/01-canonical-ingress.json'))
     verifier = json.dumps(load('library/agents/11-internal-auth-verify.json'))
