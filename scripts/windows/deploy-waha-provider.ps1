@@ -9,6 +9,7 @@ $workflowPaths = @(
   'library/workflows/07-rag-search.json',
   'library/agents/09-tool-policy-gateway.json',
   'starter/workflows/06-outbound-text.json',
+  'starter/workflows/07-multi-agent-orchestrator.json',
   'starter/workflows/08-waha-inbound.json'
 )
 $workflowNames = @(
@@ -18,6 +19,7 @@ $workflowNames = @(
   '07 RAG Search',
   'Internal Tool Policy Gateway',
   'Starter 06 Outbound Text',
+  'Starter 07 Maya Multi-Agent Orchestrator',
   'Starter 08 WAHA Inbound'
 )
 

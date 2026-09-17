@@ -369,3 +369,19 @@ def test_deploy_includes_bounded_agent_runtime_workflow():
     script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
     assert "'library/agents/00-agent-runtime.json'" in script
     assert "'Library Agent Runtime'" in script
+
+
+def test_authorized_real_e2e_identifies_gateway_approved_entry_in_open_window():
+    script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
+    assert "$windowStart=(Get-Date).ToUniversalTime().ToString('o')" in script
+    assert "payload->>'real_e2e'='true'" in script
+    assert "created_at >= '$windowStartEsc'::timestamptz" in script
+    assert "ORDER BY created_at ASC LIMIT 1" in script
+    assert "WHERE direction='in' AND body='$markerEsc'" not in script
+    assert "WHERE id='$inboundIdEsc'::uuid" in script
+
+
+def test_deploy_includes_maya_orchestrator_timeout_workflow():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    assert script.count("'starter/workflows/07-multi-agent-orchestrator.json'") == 1
+    assert script.count("'Starter 07 Maya Multi-Agent Orchestrator'") == 1

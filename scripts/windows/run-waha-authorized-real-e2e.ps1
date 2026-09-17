@@ -164,6 +164,8 @@ try {
   if($health.waha_real_e2e_enabled -ne $true -or $health.waha_real_e2e_ready -ne $true){throw 'Trava E2E real não ficou pronta.'}
 
   Warm-OllamaPlanner ($WaitSeconds + 300)
+  $windowStart=(Get-Date).ToUniversalTime().ToString('o')
+  $windowStartEsc=$windowStart.Replace("'","''")
 
   Write-Host 'Envie agora, pelo WhatsApp autorizado, exatamente esta mensagem para o número conectado ao WAHA:'
   Write-Host $marker
@@ -172,8 +174,7 @@ try {
   $deadline=(Get-Date).AddSeconds($WaitSeconds)
   $inboundId=$null
   while((Get-Date) -lt $deadline){
-    $markerEsc=$marker.Replace("'","''")
-    $inboundId=Invoke-PgScalar "SELECT id::text FROM messages WHERE direction='in' AND body='$markerEsc' ORDER BY created_at DESC LIMIT 1;"
+    $inboundId=Invoke-PgScalar "SELECT id::text FROM messages WHERE direction='in' AND payload->>'real_e2e'='true' AND created_at >= '$windowStartEsc'::timestamptz ORDER BY created_at ASC LIMIT 1;"
     if($inboundId){break}
     Start-Sleep -Seconds 3
   }
@@ -189,7 +190,8 @@ try {
   }
   if($outboundCount -ne '1'){throw 'Resposta automática real não foi persistida exatamente uma vez dentro do prazo.'}
 
-  $inboundCount=Invoke-PgScalar "SELECT count(*)::text FROM messages WHERE direction='in' AND body='$markerEsc';"
+  $inboundIdEsc=$inboundId.Replace("'","''")
+  $inboundCount=Invoke-PgScalar "SELECT count(*)::text FROM messages WHERE id='$inboundIdEsc'::uuid AND direction='in' AND payload->>'real_e2e'='true';"
   if($inboundCount -ne '1'){throw "Idempotência de entrada falhou: $inboundCount registros."}
   Write-Host 'PASS: entrada WAHA real foi autenticada e persistida exatamente uma vez.'
   Write-Host 'PASS: Maya/contexto/RAG concluíram e a resposta WAHA real foi persistida exatamente uma vez.'

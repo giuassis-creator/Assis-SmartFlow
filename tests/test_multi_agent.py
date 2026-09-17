@@ -24,11 +24,17 @@ def test_rag_search_releases_embedding_model_before_planner():
     embed=next(node for node in data['nodes'] if node['name']=='Embed Query Locally')
     assert "keep_alive:0" in validate['parameters']['jsCode']
     assert embed['parameters']['url']=='http://ollama:11434/api/embed'
-def test_agent_runtime_bounds_local_generation_without_changing_timeouts():
+def test_agent_runtime_bounds_local_generation_and_timeouts():
     data=json.loads((ROOT/'library/agents/00-agent-runtime.json').read_text())
     nodes={node['name']:node for node in data['nodes']}
     for name in ('Prepare Planner Context','Prepare Final Response'):
         code=nodes[name]['parameters']['jsCode']
         assert 'options:{temperature:0,num_predict:256,num_ctx:2048}' in code
-    assert nodes['Ollama Agent Planner']['parameters']['options']['timeout']==180000
-    assert nodes['Ollama Final Response']['parameters']['options']['timeout']==180000
+    assert nodes['Ollama Agent Planner']['parameters']['options']['timeout']==240000
+    assert nodes['Ollama Final Response']['parameters']['options']['timeout']==240000
+    assert nodes['Automatic Durable Memory Capture']['parameters']['options']['timeout']==180000
+
+def test_orchestrator_allows_complete_agent_runtime_window():
+    data=json.loads((ROOT/'starter/workflows/07-multi-agent-orchestrator.json').read_text())
+    dispatch=next(node for node in data['nodes'] if node['name']=='Dispatch Agent')
+    assert dispatch['parameters']['options']['timeout']==540000
