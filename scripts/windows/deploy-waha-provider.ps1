@@ -201,7 +201,7 @@ Write-Host "PASS: sessão WAHA '$session' vinculada à organização '$orgSlug' 
 Write-Host '3/8 Iniciando WAHA Community e provider-gateway isolado...'
 & docker pull "devlikeapro/waha:$imageTag" | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar imagem WAHA devlikeapro/waha:$imageTag." }
-& docker compose @compose build --progress plain provider-gateway | Out-Host
+& docker compose --progress plain @compose build provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir provider-gateway.' }
 & docker compose @compose up -d --no-deps --force-recreate waha provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar WAHA/provider-gateway.' }
@@ -258,7 +258,7 @@ Wait-N8nWebhook '/webhook/adapter/waha/in' 120
 Wait-N8nWebhook '/webhook/assis/internal/message/send-text' 120
 
 Write-Host '6/8 Executando contratos estáticos...'
-& docker compose @compose --profile tools build qa | Out-Host
+& docker compose --progress plain @compose --profile tools build qa | Out-Host
 if($LASTEXITCODE -ne 0){throw 'Falha ao construir QA.'}
 & docker compose @compose --profile tools run --rm qa pytest -q tests/test_waha_provider.py tests/test_evolution_outbound.py tests/test_no_workflow_env_access.py -p no:cacheprovider | Out-Host
 if($LASTEXITCODE -ne 0){throw 'Falha nos contratos do provider WhatsApp.'}

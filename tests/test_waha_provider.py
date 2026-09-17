@@ -189,8 +189,10 @@ def test_waha_session_flow_checks_existing_create_and_start_statuses():
 
 def test_waha_provider_build_uses_noninteractive_progress_on_windows():
     script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
-    assert 'docker compose @compose build --progress plain provider-gateway' in script
+    assert 'docker compose --progress plain @compose build provider-gateway' in script
+    assert 'docker compose --progress plain @compose --profile tools build qa' in script
     assert 'docker compose @compose build provider-gateway | Out-Host' not in script
+    assert 'docker compose @compose --profile tools build qa | Out-Host' not in script
 
 
 def test_waha_secret_exposure_check_is_fail_closed_and_stream_safe():
