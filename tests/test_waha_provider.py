@@ -343,3 +343,8 @@ def test_load_and_restore_drills_are_isolated_and_provider_free():
     assert 'assis-smartflow-restore-drill' in restore
     assert 'Production volumes' in restore
     assert 'ASSIS_E2E_SIMULATED' in load and 'isolated-marker' in load
+
+def test_deploy_includes_rag_search_embedding_release_workflow():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    assert "'library/workflows/07-rag-search.json'" in script
+    assert "'07 RAG Search'" in script

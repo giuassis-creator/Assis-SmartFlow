@@ -5,6 +5,7 @@ $compose = @('--env-file','.env','-f','core/docker-compose.yml','-f','core/docke
 $workflowPaths = @(
   'library/agents/11-internal-auth-verify.json',
   'library/workflows/01-canonical-ingress.json',
+  'library/workflows/07-rag-search.json',
   'library/agents/09-tool-policy-gateway.json',
   'starter/workflows/06-outbound-text.json',
   'starter/workflows/08-waha-inbound.json'
@@ -12,6 +13,7 @@ $workflowPaths = @(
 $workflowNames = @(
   'Internal Auth Verify',
   '01 Canonical Ingress',
+  '07 RAG Search',
   'Internal Tool Policy Gateway',
   'Starter 06 Outbound Text',
   'Starter 08 WAHA Inbound'
