@@ -348,3 +348,14 @@ def test_deploy_includes_rag_search_embedding_release_workflow():
     script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
     assert "'library/workflows/07-rag-search.json'" in script
     assert "'07 RAG Search'" in script
+
+def test_authorized_real_e2e_warms_chat_planner_before_opening_message_window():
+    script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
+    warm = script.index('Warm-OllamaPlanner ($WaitSeconds + 300)')
+    prompt = script.index("Write-Host 'Envie agora, pelo WhatsApp autorizado")
+    assert warm < prompt
+    assert "fetch('http://ollama:11434/api/chat'" in script
+    assert 'keep_alive:keepAlive' in script
+    assert 'num_ctx:4096' in script
+    assert 'AbortSignal.timeout(240000)' in script
+    assert "result.done!==true" in script
