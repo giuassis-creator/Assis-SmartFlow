@@ -108,9 +108,10 @@ def test_all_workflow_graphs_and_query_parameter_delimiters():
 
 
 RESULT_SCHEMA = {
-    'type':'object', 'required':['ok','simulation','provider','organization_id',
+    'type':'object', 'required':['ok','simulation','real_e2e','provider','organization_id',
         'conversation_id','response','context_loaded','rag_count','memory_written','idempotency_key'],
-    'properties':{'ok':{'const':True}, 'simulation':{'const':True}, 'provider':{'const':'simulated'},
+    'properties':{'ok':{'const':True}, 'simulation':{'const':True}, 'real_e2e':{'const':False},
+        'provider':{'const':'simulated'},
         'organization_id':{'type':'string'}, 'conversation_id':{'type':'string'},
         'response':{'type':'string','minLength':1,'maxLength':4096},
         'context_loaded':{'const':True}, 'rag_count':{'type':'integer','minimum':1},
