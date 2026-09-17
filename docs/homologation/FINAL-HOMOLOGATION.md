@@ -2,7 +2,7 @@
 
 Status: **PASS estrutural/local** para JSON, manifests, contratos, política de identidade, idempotência, segurança estática e golden scenarios. A homologação E2E permanece condicionada a serviços reais de staging e credenciais.
 
-Pendências E2E: atendimento completo WAHA -> persistência -> RAG -> resposta real, sujeito a autorização específica; agenda real; handoff real; chamada de voz; pagamento sandbox; retry/DLQ; carga; backup e restore. Evolution/Chatwoot são adaptadores futuros, fora desta fase.
+Pendências E2E: atendimento completo WAHA -> persistência -> RAG -> resposta real, sujeito a autorização específica; agenda real; handoff real; chamada de voz; pagamento sandbox; retry/DLQ. Evolution/Chatwoot são adaptadores futuros, fora desta fase.
 
 ## WAHA outbound — sincronização da correção homologada (2026-09-14)
 
@@ -63,13 +63,15 @@ Webhooks WAHA comuns continuam apenas na persistência. A simulação não promo
 - PÃ³s-check exclusivamente simulado: replay concorrente/idempotÃªncia, autenticaÃ§Ã£o, isolamento organizacional e provider `delivered=false` permanecem aprovados pela suÃ­te E2E de 105 testes; nenhum transporte externo foi chamado.
 - Runtime preservado: 48 workflows, 15 mensagens, 2 credenciais, volumes existentes, containers saudÃ¡veis e sessÃ£o WAHA `default` em `WORKING`. `WAHA_TEST_NUMBER` permaneceu vazio.
 
-## Carga simulada e restore drill � encerramento parcial (2026-09-16)
+## Carga simulada e restore drill — aprovação (2026-09-16)
 
-- **Restore drill: APPROVED.** Restaurado em projeto e volumes tempor�rios, sem usar volumes ativos.
-- **Su�te E2E funcional: 120 passed, 7 skipped.**
-- **Harness de carga: implementado e isolado.** Perfis, m�tricas estruturadas, ciclo de vida e cleanup protegido est�o versionados.
-- **Cache Ollama E2E: VALIDATED.** `assis-smartflow-e2e-ollama-cache` � persistente e rotulado com `assis.e2e.purpose=ollama-model-cache`, `assis.e2e.production=false` e `assis.e2e.owner=simulated-load-harness`. Nunca deve ser montado pelo Compose de produ��o nem compartilhado com `assis-smartflow_ollama_data`.
-- **Carga/planner: BLOCKED � n�o aprovada.** O bootstrap completou modelos, migrations, publica��o, restart/readiness e RAG via embed-proxy, mas `Runtime.setup()` falhou na cadeia completa do planner (`simulated full chain failed`). Os perfis de carga n�o foram executados.
-- �ltima falha sanitizada: etapa planner retornou status funcional n�o-200; dura��o detalhada n�o foi persistida antes da asser��o. Modelos estavam dispon�veis e o RAG via proxy havia conclu�do. N�o houve transporte externo.
-- Retomada: validar digests, usar `ASSIS_E2E_SIMULATED=1`, projeto `assis-smartflow-load-*` e `E2E_MODEL_VOLUME=assis-smartflow-e2e-ollama-cache`; executar preflight/readiness e perfis em hardware adequado. Remover o cache somente ap�s validar os tr�s labels e com `docker volume rm assis-smartflow-e2e-ollama-cache`; nunca montar/remover `assis-smartflow_ollama_data`.
-- E2E real WAHA e respostas autom�ticas reais permanecem **n�o autorizados**.
+- **Restore drill: APPROVED.** PostgreSQL 16 foi restaurado em projeto e volume temporários, com 48 workflows, 15 mensagens, 2 credenciais e 3 extensões conferidas. Nenhum volume ou banco de produção foi usado.
+- **Suíte E2E funcional: 120 passed, 7 skipped.** O bootstrap de carga adicional comprovou `Runtime.setup()` idempotente antes dos perfis.
+- **Carga simulada: APPROVED.** Execução em AWS EC2 isolada (`m7i-flex.large`, 2 vCPU, 7,6 GiB de RAM e 4 GiB de swap), projeto `assis-smartflow-load-aws-full-1`, rede Docker interna, banco/credenciais efêmeros e cache Ollama exclusivo. O campo legado `baseline=local_hardware_only` no artefato identifica o baseline do harness; nesta aprovação o host foi a EC2 descrita acima.
+- Foram concluídas **18 requisições, todas HTTP 200 e sem erros**: ingresso/persistência/idempotência (10; 830,310 s; 0,012 rps; p50 182,359 s; p95/p99 198,823 s), replay concorrente (4; 100,504 s; 0,040 rps; p50 1,615 s; p95/p99 100,502 s), RAG (2; 205,649 s; 0,010 rps; p50 101,993 s; p95/p99 103,656 s) e Maya/planner (2; 213,476 s; 0,009 rps; p50 104,490 s; p95/p99 108,985 s).
+- Invariantes aprovadas: `provider=simulated`, `delivered=false` e `unique_messages=true`. Nenhum provider externo, envio real ou resposta automática real foi acionado.
+- Durante uma inferência, a observação manual mostrou Ollama próximo de 100% de CPU e 4,772 GiB residentes; n8n usava aproximadamente 488 MiB. Não houve registro de OOM no kernel. CPU/memória/swap/I/O por requisição e filas PostgreSQL/Redis continuam explicitamente indisponíveis no JSON, sem valores estimados.
+- O harness passou a aguardar o PostgreSQL definitivo por TCP, construir a imagem QA local, usar identidade determinística no replay do setup, gravar evidências fora do workspace somente leitura e omitir credenciais efêmeras do log de configuração.
+- Cleanup final aprovado: zero containers, projetos Compose e redes temporárias; volume anônimo removido. Permaneceu somente `assis-smartflow-load-ollama-aws-20260916`, rotulado como cache E2E e separado de `assis-smartflow_ollama_data`.
+- Evidências brutas permanecem em `.local/load-isolated/`, fora do Git. Produção, WAHA, dados, credenciais e volumes principais permaneceram intactos.
+- E2E real WAHA e respostas automáticas reais permanecem **não autorizados**.
