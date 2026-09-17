@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidatePattern('^\+?[0-9]{8,15}$')]
+  [ValidatePattern('^\+[1-9][0-9]{10,14}$')]
   [string]$TestNumber,
   [ValidateRange(180,1200)]
   [int]$WaitSeconds = 900
@@ -22,16 +22,6 @@ function Get-EnvMatch([string[]]$Lines,[string]$Name) {
 function Set-EnvLine([string[]]$Lines,[string]$Name,[string]$Value) {
   $match=Get-EnvMatch $Lines $Name
   if($match.Found){$Lines[$match.Index]="$Name=$Value"}else{$Lines += "$Name=$Value"}
-  return @($Lines)
-}
-
-function Restore-EnvLine([string[]]$Lines,[string]$Name,$Original) {
-  $match=Get-EnvMatch $Lines $Name
-  if($Original.Found){
-    if($match.Found){$Lines[$match.Index]=$Original.Line}else{$Lines += $Original.Line}
-  }else{
-    $Lines=@($Lines|Where-Object{$_ -notmatch "^\s*$([regex]::Escape($Name))\s*="})
-  }
   return @($Lines)
 }
 
@@ -72,8 +62,6 @@ function Restart-GateServices {
 
 if(-not(Test-Path .env)){throw '.env não encontrado.'}
 $originalLines=@(Get-Content .env)
-$originalEnabled=Get-EnvMatch $originalLines 'WAHA_REAL_E2E_ENABLED'
-$originalNumber=Get-EnvMatch $originalLines 'WAHA_REAL_E2E_TEST_NUMBER'
 $marker='ASSIS-E2E-'+[guid]::NewGuid().ToString('N')
 $completed=$false
 
@@ -125,14 +113,21 @@ try {
   $completed=$true
 } finally {
   $current=@(Get-Content .env)
-  $current=Restore-EnvLine $current 'WAHA_REAL_E2E_ENABLED' $originalEnabled
-  $current=Restore-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER' $originalNumber
+  # This is a temporary homologation gate. Fail closed unconditionally instead
+  # of restoring a possibly stale or unsafe previous value.
+  $current=Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'
+  $current=Set-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER' ''
   Write-EnvLines $current
   try {
     Restart-GateServices
-    Write-Host 'PASS: trava temporária E2E foi restaurada/desativada e serviços foram recriados.'
+    $gateway=Get-ComposeContainer 'provider-gateway'
+    $healthRaw=& docker exec $gateway python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5).read().decode())" 2>$null
+    if($LASTEXITCODE -ne 0){throw 'Falha ao consultar health após desativar a trava.'}
+    $health=($healthRaw -join '')|ConvertFrom-Json
+    if($health.waha_real_e2e_enabled -ne $false -or $health.waha_real_e2e_ready -ne $false){throw 'A trava E2E real permaneceu ativa após o cleanup.'}
+    Write-Host 'PASS: trava temporária E2E foi desativada, número removido e serviços foram recriados.'
   } catch {
-    Write-Warning 'A configuração do arquivo foi restaurada, mas a recriação dos serviços falhou. Não aceite novas mensagens até executar docker compose up para provider-gateway e WAHA.'
+    Write-Warning 'A configuração do arquivo foi forçada para desativada, mas a recriação/verificação dos serviços falhou. Não aceite novas mensagens até executar docker compose up para provider-gateway e WAHA.'
     if($completed){throw}
   }
 }

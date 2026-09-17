@@ -94,11 +94,14 @@ def test_real_e2e_trust_boundary_is_gateway_only_and_disabled_by_default():
 
 def test_authorized_real_e2e_runner_restores_gate_and_never_logs_number():
     script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
-    assert "[ValidatePattern('^\\+?[0-9]{8,15}$')]" in script
+    assert "[ValidatePattern('^\\+[1-9][0-9]{10,14}$')]" in script
     assert "Set-EnvLine $originalLines 'WAHA_REAL_E2E_ENABLED' 'true'" in script
     assert "Set-EnvLine $temporary 'WAHA_REAL_E2E_TEST_NUMBER' $TestNumber" in script
-    assert "Restore-EnvLine $current 'WAHA_REAL_E2E_ENABLED'" in script
-    assert "Restore-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER'" in script
+    assert "Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'" in script
+    assert "Set-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER' ''" in script
+    assert "Restore-EnvLine $current 'WAHA_REAL_E2E_ENABLED'" not in script
+    assert 'waha_real_e2e_enabled -ne $false' in script
+    assert 'waha_real_e2e_ready -ne $false' in script
     assert 'Restart-GateServices' in script
     assert "real-e2e-reply:$inboundId" in script
     assert "direction='in'" in script and "direction='out'" in script
