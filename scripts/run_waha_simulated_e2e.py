@@ -101,8 +101,8 @@ def main():
         # Match the existing warm-local-ai.ps1 prerequisite: the first planner
         # request must not also pay for loading the model into memory.
         print('E2E: warming local model before timed workflow requests', flush=True)
-        run(compose + ['exec', '-T', 'ollama', 'ollama', 'run',
-                       'qwen3:4b-instruct', 'Responda somente: OK'])
+        warm_script = """const body={model:'qwen3:4b-instruct',stream:false,keep_alive:'20m',options:{temperature:0,num_predict:1},messages:[{role:'user',content:'Responda somente: OK'}]};fetch('http://ollama:11434/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(240000)}).then(async r=>{const j=await r.json();if(!r.ok||j.done!==true)throw new Error('invalid warmup response');console.log('READY')}).catch(e=>{console.error(e.name);process.exit(1)})"""
+        run(compose + ['exec', '-T', 'n8n', 'node', '-e', warm_script])
         print('E2E: running structural validation and complete suite with actual local models', flush=True)
         r = run(compose + ['run', '--rm', 'qa', 'sh', '-c',
                            'python scripts/validate.py && pytest -q -p no:cacheprovider'], check=False)

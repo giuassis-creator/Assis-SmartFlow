@@ -24,6 +24,15 @@ def nodes(path):
     return {n['name']:n for n in workflow(path)['nodes']}
 
 
+def test_simulated_runner_warms_ollama_via_bounded_http_request():
+    script = (ROOT / 'scripts/run_waha_simulated_e2e.py').read_text(encoding='utf-8')
+    assert "'ollama', 'ollama', 'run'" not in script
+    assert "fetch('http://ollama:11434/api/chat'" in script
+    assert "num_predict:1" in script
+    assert "AbortSignal.timeout(240000)" in script
+    assert "j.done!==true" in script
+
+
 def test_integration_starts_only_after_new_canonical_persistence():
     w = workflow('library/workflows/01-canonical-ingress.json')
     n = {n['name']:n for n in w['nodes']}
