@@ -359,3 +359,8 @@ def test_authorized_real_e2e_warms_chat_planner_before_opening_message_window():
     assert 'num_ctx:4096' in script
     assert 'AbortSignal.timeout(240000)' in script
     assert "result.done!==true" in script
+    assert script.count("$warmScript=@'") == 1
+    assert script.count("\n'@\n") == 1
+    assert "function Protect-DiagnosticText([string]$Text,[string]$Marker)" in script
+    assert "$safe=$safe.Replace($Marker,'[REDACTED_MARKER]')" in script
+    assert "-notmatch '^[A-Za-z0-9._:/-]+$'" in script

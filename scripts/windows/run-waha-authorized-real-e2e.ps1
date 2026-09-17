@@ -63,161 +63,7 @@ function Restart-GateServices {
 function Warm-OllamaPlanner([int]$KeepAliveSeconds) {
   $n8n=Get-ComposeContainer 'n8n'
   $model=(& docker exec $n8n printenv OLLAMA_CHAT_MODEL 2>$null).Trim()
-  if([string]::IsNullOrWhiteSpace($model) -or $model -notmatch '^[A-Za-z0-9._:/-]+
-  if($null -eq $Text){return ''}
-  $safe=$Text
-  if($Marker){$safe=$safe.Replace($Marker,'[REDACTED_MARKER]')}
-  $safe=[regex]::Replace($safe,'(?<![0-9])\+?[0-9]{8,15}(?![0-9])','[REDACTED_NUMBER]')
-  $safe=[regex]::Replace($safe,'(?im)((?:authorization|x-api-key|x-assis-[a-z0-9-]+|api[_-]?key|token|secret|password|credential)\s*[:=]\s*)[^\s,;]+','$1[REDACTED]')
-  return $safe
-}
-
-function Save-FailureDiagnostics([string]$Marker,[System.Management.Automation.ErrorRecord]$Failure) {
-  $stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-  $directory=Join-Path $root ".local\waha-real-e2e\$stamp"
-  [System.IO.Directory]::CreateDirectory($directory)|Out-Null
-  $utf8NoBom=New-Object System.Text.UTF8Encoding($false)
-  $sha=[System.Security.Cryptography.SHA256]::Create()
-  try {
-    $markerHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Marker)))).Replace('-','').ToLowerInvariant()
-  } finally {$sha.Dispose()}
-
-  $services=[ordered]@{}
-  foreach($service in @('n8n','postgres','waha','provider-gateway')){
-    try {
-      $container=Get-ComposeContainer $service
-      $stateRaw=& docker inspect --format '{{json .State}}' $container 2>$null
-      if($LASTEXITCODE -ne 0){throw "docker inspect failed for $service"}
-      $state=($stateRaw -join '')|ConvertFrom-Json
-      $healthStatus=$null
-      if($state.Health){$healthStatus=$state.Health.Status}
-      $services[$service]=[ordered]@{
-        status=$state.Status
-        running=[bool]$state.Running
-        restarting=[bool]$state.Restarting
-        exit_code=[int]$state.ExitCode
-        oom_killed=[bool]$state.OOMKilled
-        health=$healthStatus
-      }
-      $logLines=@(& docker logs --since 30m --tail 400 $container 2>&1|ForEach-Object{$_.ToString()}|Where-Object{$_ -match '(?i)error|timeout|unauthorized|webhook|canonical|maya|agent runtime|outbound|status code|session|health|restart|oom'})
-      $safeLogs=Protect-DiagnosticText ($logLines -join [Environment]::NewLine) $Marker
-      [System.IO.File]::WriteAllText((Join-Path $directory "$service.log"),$safeLogs,$utf8NoBom)
-    } catch {
-      $services[$service]=[ordered]@{diagnostic_error='collection_failed'}
-    }
-  }
-
-  $message=Protect-DiagnosticText $Failure.Exception.Message $Marker
-  if($message.Length -gt 500){$message=$message.Substring(0,500)}
-  $summary=[ordered]@{
-    captured_at_utc=(Get-Date).ToUniversalTime().ToString('o')
-    marker_sha256=$markerHash
-    failure_type=$Failure.Exception.GetType().FullName
-    failure_message=$message
-    services=$services
-    privacy=[ordered]@{
-      env_copied=$false
-      payloads_exported=$false
-      phone_numbers_redacted=$true
-      marker_redacted=$true
-    }
-  }
-  [System.IO.File]::WriteAllText((Join-Path $directory 'summary.json'),($summary|ConvertTo-Json -Depth 8),$utf8NoBom)
-  Write-Host "INFO: diagnóstico sanitizado preservado antes do cleanup em $directory"
-}
-
-if(-not(Test-Path .env)){throw '.env não encontrado.'}
-$originalLines=@(Get-Content .env)
-$marker='ASSIS-E2E-'+[guid]::NewGuid().ToString('N')
-$completed=$false
-$primaryFailure=$null
-$cleanupFailure=$null
-
-try {
-  $temporary=Set-EnvLine $originalLines 'WAHA_REAL_E2E_ENABLED' 'true'
-  $temporary=Set-EnvLine $temporary 'WAHA_REAL_E2E_TEST_NUMBER' $TestNumber
-  Write-EnvLines $temporary
-
-  Write-Host '=== Assis SmartFlow WAHA - E2E real autorizado ==='
-  Write-Host 'INFO: trava temporária limitada ao número autorizado; o número não será exibido.'
-  & "$PSScriptRoot\deploy-waha-provider.ps1"
-  if($LASTEXITCODE -ne 0){throw 'Implantação WAHA falhou antes do E2E real.'}
-
-  $gateway=Get-ComposeContainer 'provider-gateway'
-  $healthRaw=& docker exec $gateway python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5).read().decode())" 2>$null
-  if($LASTEXITCODE -ne 0){throw 'Falha ao consultar health do provider-gateway.'}
-  $health=($healthRaw -join '')|ConvertFrom-Json
-  if($health.waha_real_e2e_enabled -ne $true -or $health.waha_real_e2e_ready -ne $true){throw 'Trava E2E real não ficou pronta.'}
-
-  Warm-OllamaPlanner ($WaitSeconds + 300)
-
-  Write-Host 'Envie agora, pelo WhatsApp autorizado, exatamente esta mensagem para o número conectado ao WAHA:'
-  Write-Host $marker
-  Write-Host "Aguardando entrada e resposta automática por até $WaitSeconds segundos..."
-
-  $deadline=(Get-Date).AddSeconds($WaitSeconds)
-  $inboundId=$null
-  while((Get-Date) -lt $deadline){
-    $markerEsc=$marker.Replace("'","''")
-    $inboundId=Invoke-PgScalar "SELECT id::text FROM messages WHERE direction='in' AND body='$markerEsc' ORDER BY created_at DESC LIMIT 1;"
-    if($inboundId){break}
-    Start-Sleep -Seconds 3
-  }
-  if(-not $inboundId){throw 'A mensagem autorizada não foi persistida dentro do prazo.'}
-
-  $idem="real-e2e-reply:$inboundId"
-  $idemEsc=$idem.Replace("'","''")
-  $outboundCount='0'
-  while((Get-Date) -lt $deadline){
-    $outboundCount=Invoke-PgScalar "SELECT count(*)::text FROM messages WHERE direction='out' AND idempotency_key='$idemEsc';"
-    if($outboundCount -eq '1'){break}
-    Start-Sleep -Seconds 3
-  }
-  if($outboundCount -ne '1'){throw 'Resposta automática real não foi persistida exatamente uma vez dentro do prazo.'}
-
-  $inboundCount=Invoke-PgScalar "SELECT count(*)::text FROM messages WHERE direction='in' AND body='$markerEsc';"
-  if($inboundCount -ne '1'){throw "Idempotência de entrada falhou: $inboundCount registros."}
-  Write-Host 'PASS: entrada WAHA real foi autenticada e persistida exatamente uma vez.'
-  Write-Host 'PASS: Maya/contexto/RAG concluíram e a resposta WAHA real foi persistida exatamente uma vez.'
-  Write-Host 'PASS: E2E real autorizado concluído.'
-  $completed=$true
-} catch {
-  $primaryFailure=$_
-  try {Save-FailureDiagnostics -Marker $marker -Failure $_}
-  catch {Write-Warning 'Falha ao preservar o diagnóstico sanitizado antes do cleanup.'}
-} finally {
-  $current=@(Get-Content .env)
-  # This is a temporary homologation gate. Fail closed unconditionally instead
-  # of restoring a possibly stale or unsafe previous value.
-  $current=Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'
-  $current=Set-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER' ''
-  Write-EnvLines $current
-  try {
-    Restart-GateServices
-    $cleanupDeadline=(Get-Date).AddSeconds(90)
-    $cleanupVerified=$false
-    do {
-      try {
-        $gateway=Get-ComposeContainer 'provider-gateway'
-        $healthRaw=& docker exec $gateway python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5).read().decode())" 2>$null
-        if($LASTEXITCODE -eq 0){
-          $health=($healthRaw -join '')|ConvertFrom-Json
-          if($health.waha_real_e2e_enabled -eq $false -and $health.waha_real_e2e_ready -eq $false){$cleanupVerified=$true;break}
-        }
-      } catch {}
-      Start-Sleep -Seconds 3
-    } while((Get-Date) -lt $cleanupDeadline)
-    if(-not $cleanupVerified){throw 'A trava E2E real não foi confirmada como desativada após o cleanup.'}
-    Write-Host 'PASS: trava temporária E2E foi desativada, número removido e serviços foram recriados.'
-  } catch {
-    $cleanupFailure=$_
-    Write-Warning 'A configuração do arquivo foi forçada para desativada, mas a recriação/verificação dos serviços falhou. Não aceite novas mensagens até executar docker compose up para provider-gateway e WAHA.'
-  }
-}
-
-if($cleanupFailure){throw $cleanupFailure}
-if($primaryFailure){throw $primaryFailure}
-){throw 'Modelo Ollama de chat inválido para aquecimento.'}
+  if([string]::IsNullOrWhiteSpace($model) -or $model -notmatch '^[A-Za-z0-9._:/-]+$'){throw 'Modelo Ollama de chat inválido para aquecimento.'}
   $warmScript=@'
 const model=process.env.ASSIS_MODEL;
 const keepAlive=process.env.ASSIS_KEEP_ALIVE+'s';
@@ -228,7 +74,7 @@ fetch('http://ollama:11434/api/chat',{method:'POST',headers:{'content-type':'app
 '@
   $warmOut=& docker exec --env "ASSIS_MODEL=$model" --env "ASSIS_KEEP_ALIVE=$KeepAliveSeconds" $n8n node -e $warmScript 2>&1
   if($LASTEXITCODE -ne 0 -or (($warmOut|ForEach-Object{$_.ToString()}) -join '') -notmatch 'READY'){throw 'Falha ao aquecer o planner Ollama antes da janela E2E real.'}
-  Write-Host "PASS: planner Ollama aquecido e mantido residente durante a janela E2E."
+  Write-Host 'PASS: planner Ollama aquecido e mantido residente durante a janela E2E.'
 }
 
 function Protect-DiagnosticText([string]$Text,[string]$Marker) {
@@ -316,6 +162,8 @@ try {
   if($LASTEXITCODE -ne 0){throw 'Falha ao consultar health do provider-gateway.'}
   $health=($healthRaw -join '')|ConvertFrom-Json
   if($health.waha_real_e2e_enabled -ne $true -or $health.waha_real_e2e_ready -ne $true){throw 'Trava E2E real não ficou pronta.'}
+
+  Warm-OllamaPlanner ($WaitSeconds + 300)
 
   Write-Host 'Envie agora, pelo WhatsApp autorizado, exatamente esta mensagem para o número conectado ao WAHA:'
   Write-Host $marker
