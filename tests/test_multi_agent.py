@@ -18,3 +18,9 @@ def test_tool_policy_gateway():
     raw=(ROOT/'library/agents/09-tool-policy-gateway.json').read_text(); assert 'tool_not_allowed_for_agent' in raw and 'explicit_confirmation_required' in raw
 def test_windows_bootstrap():
     assert 'run --rm qa' in (ROOT/'scripts/windows/bootstrap-docker-desktop.ps1').read_text()
+def test_rag_search_releases_embedding_model_before_planner():
+    data=json.loads((ROOT/'library/workflows/07-rag-search.json').read_text())
+    validate=next(node for node in data['nodes'] if node['name']=='Validate Search')
+    embed=next(node for node in data['nodes'] if node['name']=='Embed Query Locally')
+    assert "keep_alive:0" in validate['parameters']['jsCode']
+    assert embed['parameters']['url']=='http://ollama:11434/api/embed'
