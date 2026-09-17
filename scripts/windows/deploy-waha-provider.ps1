@@ -201,7 +201,7 @@ Write-Host "PASS: sessão WAHA '$session' vinculada à organização '$orgSlug' 
 Write-Host '3/8 Iniciando WAHA Community e provider-gateway isolado...'
 & docker pull "devlikeapro/waha:$imageTag" | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Falha ao baixar imagem WAHA devlikeapro/waha:$imageTag." }
-& docker compose @compose build provider-gateway | Out-Host
+& docker compose @compose build --progress plain provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir provider-gateway.' }
 & docker compose @compose up -d --no-deps --force-recreate waha provider-gateway | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar WAHA/provider-gateway.' }

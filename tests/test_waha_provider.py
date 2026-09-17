@@ -187,6 +187,12 @@ def test_waha_session_flow_checks_existing_create_and_start_statuses():
     assert "-Method 'Post' -Body" in flow
 
 
+def test_waha_provider_build_uses_noninteractive_progress_on_windows():
+    script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
+    assert 'docker compose @compose build --progress plain provider-gateway' in script
+    assert 'docker compose @compose build provider-gateway | Out-Host' not in script
+
+
 def test_waha_secret_exposure_check_is_fail_closed_and_stream_safe():
     script = (ROOT / 'scripts/windows/deploy-waha-provider.ps1').read_text(encoding='utf-8')
     helper = script.split('function Assert-WahaSecretsAbsent', 1)[1].split('function Wait-N8nWebhook', 1)[0]
