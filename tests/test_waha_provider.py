@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -77,11 +78,15 @@ def test_real_e2e_trust_boundary_is_gateway_only_and_disabled_by_default():
     assert '@app.post("/v1/waha/webhook")' in gateway
     assert 'x_assis_secret != WAHA_WEBHOOK_SECRET' in gateway
     assert 'WAHA_REAL_E2E_ENABLED and not _real_e2e_ready()' in gateway
-    assert '_normalized_number(sender) == _real_e2e_number()' in gateway
+    assert '_normalized_number(candidate) == expected' in gateway
     assert 'headers["X-Assis-Internal-Token"] = INTERNAL_AGENT_TOKEN' in gateway
     assert 'if eligible:' in gateway
     assert 'forwarded["real_e2e"] = bool(eligible)' in gateway
     assert 'timeout=620.0' in gateway
+    assert 'def _waha_sender_candidates(provider_payload: dict)' in gateway
+    assert 'info.get("SenderAlt")' in gateway
+    assert '_normalized_number(candidate) == expected' in gateway
+    assert 'forwarded_payload["from"] = authorized_sender' in gateway
 
     inbound = json.dumps(load('starter/workflows/08-waha-inbound.json'))
     canonical = json.dumps(load('library/workflows/01-canonical-ingress.json'))
@@ -100,8 +105,8 @@ def test_authorized_real_e2e_runner_restores_gate_and_never_logs_number():
     assert "Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'" in script
     assert "Set-EnvLine $current 'WAHA_REAL_E2E_TEST_NUMBER' ''" in script
     assert "Restore-EnvLine $current 'WAHA_REAL_E2E_ENABLED'" not in script
-    assert 'waha_real_e2e_enabled -ne $false' in script
-    assert 'waha_real_e2e_ready -ne $false' in script
+    assert 'waha_real_e2e_enabled -eq $false' in script
+    assert 'waha_real_e2e_ready -eq $false' in script
     assert 'Restart-GateServices' in script
     assert "real-e2e-reply:$inboundId" in script
     assert "direction='in'" in script and "direction='out'" in script
@@ -119,10 +124,50 @@ def test_authorized_real_e2e_captures_sanitized_diagnostics_before_cleanup():
     assert "'[REDACTED_MARKER]'" in script
     assert 'env_copied=$false' in script
     assert 'payloads_exported=$false' in script
+    assert '|password|credential)' in script
     assert 'docker logs --since 30m --tail 400' in script
+    assert "Where-Object{$_ -match '(?i)error|timeout|unauthorized|webhook" in script
     cleanup_start = script.index("  $current=@(Get-Content .env)")
     assert script.index('Save-FailureDiagnostics -Marker $marker -Failure $_') < cleanup_start
     assert cleanup_start < script.index("Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'")
+
+
+def test_authorized_real_e2e_cleanup_waits_for_disabled_gateway_health():
+    script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
+
+    assert '$cleanupDeadline=(Get-Date).AddSeconds(90)' in script
+    assert '$cleanupVerified=$false' in script
+    assert 'waha_real_e2e_enabled -eq $false' in script
+    assert 'waha_real_e2e_ready -eq $false' in script
+    assert 'Start-Sleep -Seconds 3' in script
+
+
+def test_waha_sender_candidates_resolve_gows_lid_to_authorized_phone():
+    source = (ROOT / 'core/provider-gateway/app.py').read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    selected = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {'_normalized_number', '_waha_sender_candidates'}
+    ]
+
+    class StubHttpException(Exception):
+        def __init__(self, **_kwargs):
+            super().__init__('http error')
+
+    class StubStatus:
+        UNPROCESSABLE_ENTITY = 422
+
+    namespace = {'HTTPException': StubHttpException, 'HTTPStatus': StubStatus}
+    exec(compile(ast.Module(body=selected, type_ignores=[]), '<gateway-functions>', 'exec'), namespace)
+
+    payload = {
+        'from': '987654321@lid',
+        '_data': {'Info': {'SenderAlt': '5511999999999@s.whatsapp.net'}},
+    }
+    candidates = namespace['_waha_sender_candidates'](payload)
+    assert candidates == ['987654321@lid', '5511999999999@s.whatsapp.net']
+    assert namespace['_normalized_number'](candidates[1]) == '5511999999999'
 
 
 def test_canonical_and_verifier_allow_explicit_waha_scope_only():

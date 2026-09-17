@@ -65,7 +65,7 @@ function Protect-DiagnosticText([string]$Text,[string]$Marker) {
   $safe=$Text
   if($Marker){$safe=$safe.Replace($Marker,'[REDACTED_MARKER]')}
   $safe=[regex]::Replace($safe,'(?<![0-9])\+?[0-9]{8,15}(?![0-9])','[REDACTED_NUMBER]')
-  $safe=[regex]::Replace($safe,'(?im)((?:authorization|x-api-key|x-assis-[a-z0-9-]+|token|secret)\s*[:=]\s*)[^\s,;]+','$1[REDACTED]')
+  $safe=[regex]::Replace($safe,'(?im)((?:authorization|x-api-key|x-assis-[a-z0-9-]+|api[_-]?key|token|secret|password|credential)\s*[:=]\s*)[^\s,;]+','$1[REDACTED]')
   return $safe
 }
 
@@ -96,7 +96,7 @@ function Save-FailureDiagnostics([string]$Marker,[System.Management.Automation.E
         oom_killed=[bool]$state.OOMKilled
         health=$healthStatus
       }
-      $logLines=@(& docker logs --since 30m --tail 400 $container 2>&1|ForEach-Object{$_.ToString()})
+      $logLines=@(& docker logs --since 30m --tail 400 $container 2>&1|ForEach-Object{$_.ToString()}|Where-Object{$_ -match '(?i)error|timeout|unauthorized|webhook|canonical|maya|agent runtime|outbound|status code|session|health|restart|oom'})
       $safeLogs=Protect-DiagnosticText ($logLines -join [Environment]::NewLine) $Marker
       [System.IO.File]::WriteAllText((Join-Path $directory "$service.log"),$safeLogs,$utf8NoBom)
     } catch {
@@ -189,11 +189,20 @@ try {
   Write-EnvLines $current
   try {
     Restart-GateServices
-    $gateway=Get-ComposeContainer 'provider-gateway'
-    $healthRaw=& docker exec $gateway python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5).read().decode())" 2>$null
-    if($LASTEXITCODE -ne 0){throw 'Falha ao consultar health após desativar a trava.'}
-    $health=($healthRaw -join '')|ConvertFrom-Json
-    if($health.waha_real_e2e_enabled -ne $false -or $health.waha_real_e2e_ready -ne $false){throw 'A trava E2E real permaneceu ativa após o cleanup.'}
+    $cleanupDeadline=(Get-Date).AddSeconds(90)
+    $cleanupVerified=$false
+    do {
+      try {
+        $gateway=Get-ComposeContainer 'provider-gateway'
+        $healthRaw=& docker exec $gateway python -c "import json,urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=5).read().decode())" 2>$null
+        if($LASTEXITCODE -eq 0){
+          $health=($healthRaw -join '')|ConvertFrom-Json
+          if($health.waha_real_e2e_enabled -eq $false -and $health.waha_real_e2e_ready -eq $false){$cleanupVerified=$true;break}
+        }
+      } catch {}
+      Start-Sleep -Seconds 3
+    } while((Get-Date) -lt $cleanupDeadline)
+    if(-not $cleanupVerified){throw 'A trava E2E real não foi confirmada como desativada após o cleanup.'}
     Write-Host 'PASS: trava temporária E2E foi desativada, número removido e serviços foram recriados.'
   } catch {
     $cleanupFailure=$_

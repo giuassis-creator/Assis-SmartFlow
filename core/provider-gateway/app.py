@@ -112,6 +112,19 @@ def _normalized_number(value: str) -> str:
     return digits
 
 
+def _waha_sender_candidates(provider_payload: dict) -> list[str]:
+    candidates: list[str] = []
+    sender = str(provider_payload.get("from") or "").strip()
+    if sender:
+        candidates.append(sender)
+    data = provider_payload.get("_data") if isinstance(provider_payload.get("_data"), dict) else {}
+    info = data.get("Info") if isinstance(data.get("Info"), dict) else {}
+    sender_alt = str(info.get("SenderAlt") or "").strip()
+    if sender_alt and sender_alt not in candidates:
+        candidates.append(sender_alt)
+    return candidates
+
+
 def _evolution_payload(number: str, text: str, delay_ms: int, style: str | None = None) -> dict:
     style = (style or EVOLUTION_SENDTEXT_PAYLOAD_STYLE).strip().lower()
     if style == "legacy":
@@ -220,13 +233,23 @@ def waha_webhook(payload: dict, x_assis_secret: str | None = Header(default=None
     event = str(payload.get("event") or "").strip()
     provider_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
     sender = str(provider_payload.get("from") or "").strip()
+    authorized_sender = None
     eligible = False
     if event == "message" and provider_payload.get("fromMe") is not True and sender:
-        try:
-            eligible = _real_e2e_ready() and _normalized_number(sender) == _real_e2e_number()
-        except HTTPException:
-            eligible = False
+        expected = _real_e2e_number() if _real_e2e_ready() else None
+        for candidate in _waha_sender_candidates(provider_payload):
+            try:
+                if expected and _normalized_number(candidate) == expected:
+                    authorized_sender = candidate
+                    eligible = True
+                    break
+            except HTTPException:
+                continue
     forwarded["real_e2e"] = bool(eligible)
+    if eligible and authorized_sender and authorized_sender != sender:
+        forwarded_payload = dict(provider_payload)
+        forwarded_payload["from"] = authorized_sender
+        forwarded["payload"] = forwarded_payload
 
     headers = {
         "Content-Type": "application/json",
