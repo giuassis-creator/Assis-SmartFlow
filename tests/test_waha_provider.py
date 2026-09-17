@@ -110,6 +110,21 @@ def test_authorized_real_e2e_runner_restores_gate_and_never_logs_number():
     assert 'UTF8Encoding($false)' in script
 
 
+def test_authorized_real_e2e_captures_sanitized_diagnostics_before_cleanup():
+    script = (ROOT / 'scripts/windows/run-waha-authorized-real-e2e.ps1').read_text(encoding='utf-8')
+
+    assert 'function Save-FailureDiagnostics' in script
+    assert '.local\\waha-real-e2e' in script
+    assert "'[REDACTED_NUMBER]'" in script
+    assert "'[REDACTED_MARKER]'" in script
+    assert 'env_copied=$false' in script
+    assert 'payloads_exported=$false' in script
+    assert 'docker logs --since 30m --tail 400' in script
+    cleanup_start = script.index("  $current=@(Get-Content .env)")
+    assert script.index('Save-FailureDiagnostics -Marker $marker -Failure $_') < cleanup_start
+    assert cleanup_start < script.index("Set-EnvLine $current 'WAHA_REAL_E2E_ENABLED' 'false'")
+
+
 def test_canonical_and_verifier_allow_explicit_waha_scope_only():
     canonical = json.dumps(load('library/workflows/01-canonical-ingress.json'))
     verifier = json.dumps(load('library/agents/11-internal-auth-verify.json'))

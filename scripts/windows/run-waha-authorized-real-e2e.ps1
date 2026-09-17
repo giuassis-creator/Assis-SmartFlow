@@ -60,10 +60,75 @@ function Restart-GateServices {
   if($LASTEXITCODE -ne 0){throw 'Falha ao recriar provider-gateway/WAHA.'}
 }
 
+function Protect-DiagnosticText([string]$Text,[string]$Marker) {
+  if($null -eq $Text){return ''}
+  $safe=$Text
+  if($Marker){$safe=$safe.Replace($Marker,'[REDACTED_MARKER]')}
+  $safe=[regex]::Replace($safe,'(?<![0-9])\+?[0-9]{8,15}(?![0-9])','[REDACTED_NUMBER]')
+  $safe=[regex]::Replace($safe,'(?im)((?:authorization|x-api-key|x-assis-[a-z0-9-]+|token|secret)\s*[:=]\s*)[^\s,;]+','$1[REDACTED]')
+  return $safe
+}
+
+function Save-FailureDiagnostics([string]$Marker,[System.Management.Automation.ErrorRecord]$Failure) {
+  $stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+  $directory=Join-Path $root ".local\waha-real-e2e\$stamp"
+  [System.IO.Directory]::CreateDirectory($directory)|Out-Null
+  $utf8NoBom=New-Object System.Text.UTF8Encoding($false)
+  $sha=[System.Security.Cryptography.SHA256]::Create()
+  try {
+    $markerHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Marker)))).Replace('-','').ToLowerInvariant()
+  } finally {$sha.Dispose()}
+
+  $services=[ordered]@{}
+  foreach($service in @('n8n','postgres','waha','provider-gateway')){
+    try {
+      $container=Get-ComposeContainer $service
+      $stateRaw=& docker inspect --format '{{json .State}}' $container 2>$null
+      if($LASTEXITCODE -ne 0){throw "docker inspect failed for $service"}
+      $state=($stateRaw -join '')|ConvertFrom-Json
+      $healthStatus=$null
+      if($state.Health){$healthStatus=$state.Health.Status}
+      $services[$service]=[ordered]@{
+        status=$state.Status
+        running=[bool]$state.Running
+        restarting=[bool]$state.Restarting
+        exit_code=[int]$state.ExitCode
+        oom_killed=[bool]$state.OOMKilled
+        health=$healthStatus
+      }
+      $logLines=@(& docker logs --since 30m --tail 400 $container 2>&1|ForEach-Object{$_.ToString()})
+      $safeLogs=Protect-DiagnosticText ($logLines -join [Environment]::NewLine) $Marker
+      [System.IO.File]::WriteAllText((Join-Path $directory "$service.log"),$safeLogs,$utf8NoBom)
+    } catch {
+      $services[$service]=[ordered]@{diagnostic_error='collection_failed'}
+    }
+  }
+
+  $message=Protect-DiagnosticText $Failure.Exception.Message $Marker
+  if($message.Length -gt 500){$message=$message.Substring(0,500)}
+  $summary=[ordered]@{
+    captured_at_utc=(Get-Date).ToUniversalTime().ToString('o')
+    marker_sha256=$markerHash
+    failure_type=$Failure.Exception.GetType().FullName
+    failure_message=$message
+    services=$services
+    privacy=[ordered]@{
+      env_copied=$false
+      payloads_exported=$false
+      phone_numbers_redacted=$true
+      marker_redacted=$true
+    }
+  }
+  [System.IO.File]::WriteAllText((Join-Path $directory 'summary.json'),($summary|ConvertTo-Json -Depth 8),$utf8NoBom)
+  Write-Host "INFO: diagnóstico sanitizado preservado antes do cleanup em $directory"
+}
+
 if(-not(Test-Path .env)){throw '.env não encontrado.'}
 $originalLines=@(Get-Content .env)
 $marker='ASSIS-E2E-'+[guid]::NewGuid().ToString('N')
 $completed=$false
+$primaryFailure=$null
+$cleanupFailure=$null
 
 try {
   $temporary=Set-EnvLine $originalLines 'WAHA_REAL_E2E_ENABLED' 'true'
@@ -111,6 +176,10 @@ try {
   Write-Host 'PASS: Maya/contexto/RAG concluíram e a resposta WAHA real foi persistida exatamente uma vez.'
   Write-Host 'PASS: E2E real autorizado concluído.'
   $completed=$true
+} catch {
+  $primaryFailure=$_
+  try {Save-FailureDiagnostics -Marker $marker -Failure $_}
+  catch {Write-Warning 'Falha ao preservar o diagnóstico sanitizado antes do cleanup.'}
 } finally {
   $current=@(Get-Content .env)
   # This is a temporary homologation gate. Fail closed unconditionally instead
@@ -127,7 +196,10 @@ try {
     if($health.waha_real_e2e_enabled -ne $false -or $health.waha_real_e2e_ready -ne $false){throw 'A trava E2E real permaneceu ativa após o cleanup.'}
     Write-Host 'PASS: trava temporária E2E foi desativada, número removido e serviços foram recriados.'
   } catch {
+    $cleanupFailure=$_
     Write-Warning 'A configuração do arquivo foi forçada para desativada, mas a recriação/verificação dos serviços falhou. Não aceite novas mensagens até executar docker compose up para provider-gateway e WAHA.'
-    if($completed){throw}
   }
 }
+
+if($cleanupFailure){throw $cleanupFailure}
+if($primaryFailure){throw $primaryFailure}
