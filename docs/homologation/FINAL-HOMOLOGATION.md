@@ -1,8 +1,8 @@
 # Homologação final
 
-Status: **PASS estrutural/local** para JSON, manifests, contratos, política de identidade, idempotência, segurança estática e golden scenarios. A homologação E2E permanece condicionada a serviços reais de staging e credenciais.
+Status: **PASS estrutural/local e no E2E isolado simulado** para JSON, manifests, contratos, política de identidade, idempotência, segurança estática, golden scenarios e cadeia completa com modelos locais reais. A implantação WAHA está concluída. A resposta automática real completa permanece não aprovada.
 
-Pendências E2E: atendimento completo WAHA -> persistência -> RAG -> resposta real, sujeito a autorização específica; agenda real; handoff real; chamada de voz; pagamento sandbox; retry/DLQ. Evolution/Chatwoot são adaptadores futuros, fora desta fase.
+Pendências E2E: nova execução explicitamente autorizada do atendimento completo WAHA -> persistência -> RAG -> resposta real; agenda real; handoff real; chamada de voz; pagamento sandbox; retry/DLQ. Evolution/Chatwoot são adaptadores futuros, fora desta fase.
 
 ## WAHA outbound — sincronização da correção homologada (2026-09-14)
 
@@ -75,3 +75,16 @@ Webhooks WAHA comuns continuam apenas na persistência. A simulação não promo
 - Cleanup final aprovado: zero containers, projetos Compose e redes temporárias; volume anônimo removido. Permaneceu somente `assis-smartflow-load-ollama-aws-20260916`, rotulado como cache E2E e separado de `assis-smartflow_ollama_data`.
 - Evidências brutas permanecem em `.local/load-isolated/`, fora do Git. Produção, WAHA, dados, credenciais e volumes principais permaneceram intactos.
 - E2E real WAHA e respostas automáticas reais permanecem **não autorizados**.
+
+## Identificação E2E, timeouts e implantação — validação de 2026-09-18
+
+Status: **APPROVED no E2E isolado simulado e na implantação sem novo envio real**. A resposta automática real completa permanece pendente.
+
+- O runner real deixou de depender da igualdade byte a byte entre o corpo recebido e o marcador exibido. A entrada é selecionada somente após a abertura da janela e exige `payload.real_e2e=true`; o gateway continua responsável pelo gate temporário e pelo número autorizado.
+- Os limites internos passaram a 240 s no `Ollama Agent Planner` e no `Ollama Final Response`, e a 540 s no despacho `Maya -> Agent Runtime`. Modelo `qwen3:4b-instruct`, `num_ctx=2048`, `num_predict=256`, prompts e timeout de 180 s da captura automática de memória foram preservados.
+- Validação na AWS EC2 isolada: **148 passed, 1 skipped em 169,70 s**. A validação estrutural passou, os modelos locais reais foram usados e a rede não continha provider real.
+- Implantação controlada: oito workflows seletivos foram importados, vinculados, publicados e ativados, incluindo `Library Agent Runtime`, `07 RAG Search` e `Starter 07 Maya Multi-Agent Orchestrator`. Os contratos estáticos terminaram com **38 passed**.
+- Pós-implantação: sessão WAHA `default` em `WORKING`, inbound/outbound registrados, `WAHA_TEST_NUMBER` vazio e trava real desativada. Nenhuma mensagem real foi enviada nesta validação.
+- Commit implantado: `68906e29203c777554ac133a2d447ff095de46a6`.
+- Esta aprovação comprova a correção estrutural, os novos limites, o E2E simulado e a implantação. Não substitui uma futura homologação ponta a ponta com resposta automática real.
+
