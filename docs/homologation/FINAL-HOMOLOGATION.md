@@ -88,3 +88,15 @@ Status: **APPROVED no E2E isolado simulado e na implantação sem novo envio rea
 - Commit implantado: `68906e29203c777554ac133a2d447ff095de46a6`.
 - Esta aprovação comprova a correção estrutural, os novos limites, o E2E simulado e a implantação. Não substitui uma futura homologação ponta a ponta com resposta automática real.
 
+## E2E real WAHA — bloqueio por capacidade local (2026-09-18)
+
+Status: **BLOCKED por capacidade local do planner; nenhuma nova otimização ou repetição autorizada**.
+
+- Uma única mensagem real foi autorizada e enviada pelo segundo WhatsApp de teste. A entrada foi reconhecida pela nova janela E2E e persistida, comprovando a correção de identificação.
+- A cadeia alcançou o `Ollama Agent Planner`, que excedeu exatamente o limite implantado de 240 s. O Ollama encerrou `POST /api/chat` com HTTP 500 após quatro minutos; a falha foi propagada por Agent Runtime, Maya e ingresso canônico.
+- Nenhuma resposta outbound foi persistida ou entregue. O critério de homologação real não foi atingido.
+- n8n, PostgreSQL, WAHA e provider-gateway permaneceram ativos; PostgreSQL, WAHA e gateway estavam saudáveis e não houve OOM.
+- O cleanup fail-closed desativou a trava real, removeu o número autorizado e recriou WAHA/provider-gateway com sucesso.
+- Decisão registrada: manter modelo, `num_ctx=2048`, `num_predict=256`, timeouts 240/540 s e recursos atuais. Não aumentar timeout, reduzir qualidade, trocar modelo ou mover inferência nesta etapa.
+- O E2E isolado na AWS e a implantação permanecem aprovados. Somente a homologação ponta a ponta com resposta automática real fica **BLOCKED**.
+
