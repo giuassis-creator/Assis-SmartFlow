@@ -22,7 +22,7 @@ Status: **PASS — correção implantada e verificada sem novo envio real**.
 
 ## WAHA — encadeamento E2E com saída simulada
 
-Status: **PASS no E2E isolado simulado; implantação real dos workflows pendente nesta etapa**. E2E real e ativação de resposta automática real continuam pendentes de autorização.
+Status: **PASS no E2E isolado simulado; implantação dos workflows concluída na atualização de 2026-09-18**. A resposta automática real completa continua não aprovada e exige nova autorização para repetição.
 
 ### Contratos e pontos de integração
 
