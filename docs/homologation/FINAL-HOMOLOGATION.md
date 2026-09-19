@@ -100,3 +100,13 @@ Status: **BLOCKED por capacidade local do planner; nenhuma nova otimização ou 
 - Decisão registrada: manter modelo, `num_ctx=2048`, `num_predict=256`, timeouts 240/540 s e recursos atuais. Não aumentar timeout, reduzir qualidade, trocar modelo ou mover inferência nesta etapa.
 - O E2E isolado na AWS e a implantação permanecem aprovados. Somente a homologação ponta a ponta com resposta automática real fica **BLOCKED**.
 
+## Google Calendar — homologação runtime aprovada (2026-09-19)
+
+Status: **APPROVED**.
+
+- A validação estática terminou com **11 passed**; o aviso de cache do pytest em filesystem read-only não afetou os testes.
+- O smoke runtime confirmou disponibilidade, rejeição de autenticação inválida, gate de confirmação, idempotência persistente, criação, reagendamento e cancelamento.
+- Foi criado um único evento temporário de homologação; o mesmo evento foi reagendado e cancelado pelo smoke.
+- Nenhum evento permanente foi deixado na agenda.
+- Os quatro adapters Calendar e o Policy Gateway permaneceram dentro do escopo; nenhum workflow fora do módulo foi alterado.
+- A superfície final voltou para `https://assis.localhost`; a porta local 5678 não é necessária para a operação normal.
