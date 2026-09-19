@@ -97,7 +97,7 @@ if ($publicStatus -ne '404') { throw "Webhook interno Calendar ficou acessível 
 Write-Host 'PASS: Caddy retorna 404 para Calendar interno.'
 
 Write-Host 'Executando validação estática específica do Calendar...'
-& docker compose @compose --profile tools build qa | Out-Host
+& docker compose --progress plain @compose --profile tools build qa | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao construir imagem QA.' }
 & docker compose @compose --profile tools run --rm qa pytest -q tests/test_calendar_adapters.py | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'Falha na validação estática dos adapters Calendar.' }

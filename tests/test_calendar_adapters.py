@@ -140,3 +140,9 @@ def test_calendar_mcp_catalog_matches_hardened_runtime():
         required = set(contract["input"]["required"])
         assert "confirmed" in required
         assert "idempotency_key" in required
+
+
+def test_calendar_deploy_uses_noninteractive_plain_build_progress():
+    script = (ROOT / "scripts" / "windows" / "deploy-google-calendar.ps1").read_text(encoding="utf-8")
+    assert "docker compose --progress plain @compose --profile tools build qa" in script
+    assert "docker compose @compose --profile tools build qa" not in script
