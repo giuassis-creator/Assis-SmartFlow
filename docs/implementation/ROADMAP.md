@@ -19,3 +19,4 @@
 - [x] Implantação controlada atualizada para oito workflows WAHA/Maya, com credenciais vinculadas, publicação, 38 contratos aprovados e sessão WAHA `WORKING`; nenhum envio real na validação (2026-09-18).
 - [x] Timeouts internos de 240 s no planner/resposta final e 540 s no despacho Maya validados no E2E isolado e implantados (commit `68906e29203c777554ac133a2d447ff095de46a6`).
 - [x] Homologação runtime do Google Calendar aprovada: disponibilidade, confirmação, idempotência, criação, reagendamento e cancelamento do evento temporário (11 testes estáticos, 2026-09-19).
+- [x] Voz local implantada: quatro workflows de voz publicados; STT faster-whisper e TTS Kokoro ativos. Smoke sintético local aprovado, gerando 127.244 bytes e transcrevendo em português, sem áudio externo (2026-09-19).
