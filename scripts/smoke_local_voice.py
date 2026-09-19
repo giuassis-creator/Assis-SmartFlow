@@ -9,7 +9,7 @@ VOICE = os.getenv("TTS_VOICE", "pf_dora")
 TEXT = "Teste local de voz da Assis SmartFlow."
 
 
-def request_json(url, payload, timeout=180):
+def request_bytes(url, payload, timeout=180):
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -46,14 +46,23 @@ def get(url, timeout=30):
 def main():
     get(STT + "/health")
     get(TTS + "/tts/status")
-    audio, headers = request_json(
+    audio, headers = request_bytes(
         TTS + "/tts/generate",
         {"text": TEXT, "voice": VOICE, "output_format": "wav"},
     )
-    content_type = headers.get("Content-Type", "")
-    if len(audio) < 1000 or "audio" not in content_type.lower():
-        raise RuntimeError("TTS não produziu WAV válido")
-    result = json.loads(multipart(STT + "/v1/transcribe?language=pt", "file", "synthetic-tts.wav", audio))
+    signature = audio[:12]
+    is_audio = (
+        signature.startswith(b"RIFF") and b"WAVE" in signature
+    ) or signature.startswith((b"ID3", b"OggS", b"fLaC"))
+    if len(audio) < 1000 or not is_audio:
+        content_type = headers.get("Content-Type", "")
+        raise RuntimeError(
+            f"TTS não produziu áudio válido (bytes={len(audio)}, "
+            f"content_type={content_type!r}, signature={signature!r})"
+        )
+    result = json.loads(
+        multipart(STT + "/v1/transcribe?language=pt", "file", "synthetic-tts.wav", audio)
+    )
     if not isinstance(result.get("text"), str):
         raise RuntimeError("STT não retornou campo text")
     print(json.dumps({
