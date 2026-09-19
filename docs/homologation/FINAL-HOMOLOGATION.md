@@ -110,3 +110,13 @@ Status: **APPROVED**.
 - Nenhum evento permanente foi deixado na agenda.
 - Os quatro adapters Calendar e o Policy Gateway permaneceram dentro do escopo; nenhum workflow fora do módulo foi alterado.
 - A superfície final voltou para `https://assis.localhost`; a porta local 5678 não é necessária para a operação normal.
+
+
+## Voz local — implantação e smoke runtime aprovado (2026-09-19)
+
+Status: **APPROVED localmente**.
+
+- Os workflows `Professional 11 Voice Ingress`, `Professional 17 Local STT`, `Professional 18 Local TTS` e `Professional 19 Voice Callback Adapter` foram importados, vinculados à credencial PostgreSQL, publicados e ativados.
+- STT (`faster-whisper`, CPU/int8) e TTS (Kokoro, voz `pf_dora`) permaneceram ativos e o container STT reportou estado saudável.
+- O smoke local gerou áudio sintético pelo TTS em memória e o enviou ao STT interno; foram retornados 127.244 bytes e transcrição em português.
+- Nenhum áudio foi salvo, enviado a provedor externo ou associado a chamada real. WAHA, Calendar e os demais workflows permaneceram fora do escopo.
