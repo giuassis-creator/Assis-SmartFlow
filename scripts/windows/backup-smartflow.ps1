@@ -1,9 +1,9 @@
-$ErrorActionPreference = 'Stop'
 param(
   [ValidateRange(1, 3650)]
   [int]$RetentionDays = 30
 )
 
+$ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
