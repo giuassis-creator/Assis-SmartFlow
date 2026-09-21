@@ -143,13 +143,19 @@ Resultados esperados:
 
 ## 9. Recriar tarefas agendadas
 
-Recrie e valide:
+Abra o PowerShell 7 como administrador e execute:
+
+~~~powershell
+.\scripts\windows\install-operational-tasks.ps1 -MirrorPath 'C:\Assis-SmartFlow-Backups' -BackupTime '03:00' -RestoreTime '04:00'
+~~~
+
+O instalador é idempotente e recria:
 
 - monitor horário;
 - backup diário às 03:00 com espelho;
 - teste mensal de restauração no dia 1 às 04:00.
 
-Cada tarefa deve terminar com LastTaskResult igual a 0.
+As tarefas usam o usuário conectado porque o Docker Desktop depende da sessão desse usuário. Valide cada tarefa com uma execução controlada; LastTaskResult deve ser igual a 0.
 
 ## Critério de conclusão
 
