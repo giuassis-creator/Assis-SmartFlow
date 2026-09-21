@@ -1,6 +1,8 @@
 param(
   [ValidateRange(1, 3650)]
-  [int]$RetentionDays = 30
+  [int]$RetentionDays = 30,
+
+  [string]$MirrorPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,6 +67,41 @@ foreach ($file in $expired) {
   Remove-Item -LiteralPath $file.FullName -Force
 }
 
+$mirrorFinal = $null
+$mirrorExpired = @()
+if ($MirrorPath) {
+  $localFullPath = [System.IO.Path]::GetFullPath($backupDir).TrimEnd('\')
+  $mirrorFullPath = [System.IO.Path]::GetFullPath($MirrorPath).TrimEnd('\')
+  if ($mirrorFullPath -eq $localFullPath) {
+    throw 'O espelho deve ser diferente da pasta local de backups.'
+  }
+
+  New-Item -ItemType Directory -Force -Path $mirrorFullPath | Out-Null
+  $mirrorPartial = Join-Path $mirrorFullPath "$fileName.partial"
+  $mirrorFinal = Join-Path $mirrorFullPath $fileName
+  try {
+    Copy-Item -LiteralPath $finalFile -Destination $mirrorPartial -Force
+    $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $finalFile).Hash
+    $mirrorHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $mirrorPartial).Hash
+    if ($sourceHash -ne $mirrorHash) {
+      throw 'A cópia espelhada não passou na verificação SHA-256.'
+    }
+    Move-Item -LiteralPath $mirrorPartial -Destination $mirrorFinal -Force
+  } finally {
+    if (Test-Path -LiteralPath $mirrorPartial) {
+      Remove-Item -LiteralPath $mirrorPartial -Force
+    }
+  }
+
+  $mirrorExpired = @(
+    Get-ChildItem -LiteralPath $mirrorFullPath -Filter 'smartflow-*.dump' -File |
+      Where-Object { $_.LastWriteTimeUtc -lt $cutoff -and $_.FullName -ne $mirrorFinal }
+  )
+  foreach ($file in $mirrorExpired) {
+    Remove-Item -LiteralPath $file.FullName -Force
+  }
+}
+
 $result = [ordered]@{
   completed_at_utc = (Get-Date).ToUniversalTime().ToString('o')
   ok = $true
@@ -72,9 +109,16 @@ $result = [ordered]@{
   bytes = (Get-Item -LiteralPath $finalFile).Length
   retention_days = $RetentionDays
   removed_expired = $expired.Count
+  mirror_path = $mirrorFinal
+  mirror_bytes = if ($mirrorFinal) { (Get-Item -LiteralPath $mirrorFinal).Length } else { $null }
+  mirror_removed_expired = $mirrorExpired.Count
 }
 ($result | ConvertTo-Json -Compress) |
   Add-Content -Path (Join-Path $backupDir 'backup-history.jsonl') -Encoding utf8
 
 Write-Host "PASS: backup criado em $finalFile"
 Write-Host "PASS: retenção de $RetentionDays dias aplicada; removidos: $($expired.Count)"
+if ($mirrorFinal) {
+  Write-Host "PASS: espelho SHA-256 verificado em $mirrorFinal"
+  Write-Host "PASS: retenção do espelho aplicada; removidos: $($mirrorExpired.Count)"
+}
