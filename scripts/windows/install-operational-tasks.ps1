@@ -33,6 +33,18 @@ foreach ($path in @($monitorScript, $backupScript, $restoreScript)) {
 $mirrorFullPath = [IO.Path]::GetFullPath($MirrorPath)
 New-Item -ItemType Directory -Force -Path $mirrorFullPath | Out-Null
 
+$launcherDir = Join-Path $root '.local\scheduled-tasks'
+New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
+$backupLauncher = Join-Path $launcherDir 'daily-backup.ps1'
+$escapedBackupScript = $backupScript.Replace("'", "''")
+$escapedMirrorPath = $mirrorFullPath.Replace("'", "''")
+$launcherContent = @"
+`$ErrorActionPreference = 'Stop'
+& '$escapedBackupScript' -RetentionDays 30 -MirrorPath '$escapedMirrorPath'
+if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }
+"@
+[IO.File]::WriteAllText($backupLauncher, $launcherContent, [Text.UTF8Encoding]::new($false))
+
 function New-AssisTask {
   param(
     [Parameter(Mandatory)][string]$Name,
@@ -64,8 +76,14 @@ function New-AssisTask {
 
 $quotedPwsh = '"' + $pwsh + '"'
 $monitorCommand = "$quotedPwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$monitorScript`""
-$backupCommand = "$quotedPwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$backupScript`" -RetentionDays 30 -MirrorPath `"$mirrorFullPath`""
+$backupCommand = "$quotedPwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$backupLauncher`""
 $restoreCommand = "$quotedPwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$restoreScript`""
+
+foreach ($command in @($monitorCommand, $backupCommand, $restoreCommand)) {
+  if ($command.Length -gt 240) {
+    throw "Comando de tarefa excede o limite seguro de 240 caracteres: $($command.Length)"
+  }
+}
 
 New-AssisTask -Name 'Assis SmartFlow Hourly Monitor' -Command $monitorCommand -Schedule @('/SC', 'HOURLY', '/MO', '1')
 New-AssisTask -Name 'Assis SmartFlow Daily Backup' -Command $backupCommand -Schedule @('/SC', 'DAILY', '/ST', $BackupTime)
@@ -86,6 +104,11 @@ $tasks = foreach ($name in $taskNames) {
     Execute = $task.Actions.Execute
     Arguments = $task.Actions.Arguments
   }
+}
+
+$dailyTask = $tasks | Where-Object TaskName -eq 'Assis SmartFlow Daily Backup'
+if (-not $dailyTask -or $dailyTask.Arguments -notlike "*$backupLauncher*") {
+  throw 'A tarefa diária não referencia o launcher de backup completo.'
 }
 
 $tasks | Format-Table TaskName, State, NextRunTime -AutoSize
