@@ -38,6 +38,18 @@ function Get-HttpCode([string]$Url) {
   return ([string]$code).Trim()
 }
 
+function Send-LocalAlert([string]$Message) {
+  $eventCreate = Get-Command eventcreate.exe -ErrorAction SilentlyContinue
+  if ($eventCreate) {
+    & $eventCreate.Source /T ERROR /ID 1000 /L APPLICATION /SO 'Assis SmartFlow' /D $Message 2>$null | Out-Null
+  }
+
+  $messageCommand = Get-Command msg.exe -ErrorAction SilentlyContinue
+  if ($messageCommand -and $env:USERNAME) {
+    & $messageCommand.Source $env:USERNAME /TIME:60 $Message 2>$null | Out-Null
+  }
+}
+
 $n8nCode = Get-HttpCode 'https://assis.localhost/'
 $internalCode = Get-HttpCode 'https://assis.localhost/webhook/assis/internal/auth/verify'
 if ($n8nCode -ne '200') { $failures.Add("n8n_http:$n8nCode") }
@@ -62,7 +74,9 @@ $result = [ordered]@{
 ($result | ConvertTo-Json -Depth 8 -Compress) | Add-Content -Path $logFile -Encoding utf8
 
 if ($failures.Count -gt 0) {
-  Write-Error ("Assis SmartFlow health check failed: " + ($failures -join ', '))
+  $alertMessage = "Assis SmartFlow indisponível: " + ($failures -join ', ')
+  Send-LocalAlert $alertMessage
+  Write-Error $alertMessage
   exit 1
 }
 Write-Host "PASS: Assis SmartFlow saudável em $checkedAt"
