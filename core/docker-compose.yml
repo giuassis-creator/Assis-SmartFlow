@@ -183,7 +183,7 @@ services:
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
     volumes:
-      - whisper_cache:/root/.cache/huggingface
+      - whisper_cache:/home/assis/.cache/huggingface
     networks: [backend, ai_egress]
 
   tts:
